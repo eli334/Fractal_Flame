@@ -6,9 +6,9 @@
 #include <string>
 #include <cuda_runtime.h>
 
-// Fractal Flame generation
+// Fractal Flame generation (CPU only)
 // Has a GUI at the start to pick the mode -- see other files for implementations
-// Maximizes performance with OpenMP and CUDA, if it's worth splitting the work into multiple cores
+// Maximizes performance with OpenMP, if it's worth splitting the work into multiple cores
 
 
 
@@ -16,7 +16,7 @@ int main(int argc, char **argv ) {
 
 
 
-
+    
 
 
     int threads = atoi(argv[2]); // ./fractal_flame -T 8 -R 1920x1080
