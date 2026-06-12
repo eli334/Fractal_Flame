@@ -4,4 +4,7 @@ Super Awesome Fractal Flame Generator
 
 Credit
 
-Credit to https://github.com/ocornut/imgui (MIT License)
+https://github.com/glfw/glfw
+https://github.com/dav1dde/glad
+https://github.com/ocornut/imgui
+https://github.com/juliettef/iconfontcppheaders (gear icon for the settings menu)

@@ -55,23 +55,30 @@ int main(int argc, char **argv ) {
 
         GLFWwindow* window = glfwCreateWindow(640, 480, "Configure Settings", NULL, NULL);
         printf("Window created!\r\n");
+        
         if (!window) { glfwTerminate(); return -1; }
         glfwMakeContextCurrent(window);
         gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+        
         ImGui::CreateContext();
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 330");
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
+
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame(); // {Link: Recited in GH #9112 https://github.com/ocornut/imgui/issues/9112}
             ImGui::NewFrame();
-            ImGui::ShowDemoWindow(); // Example Content
 
+            // code to modify contents of window goes here
+            ImGui::Begin("Fractal Flame Engine");
+
+            
+            ImGui::End();
             // Render
             ImGui::Render();
-            glClear(GL_COLOR_BUFFER_BIT);
+            glClear(GL_COLOR_BUFFER_BIT); // stops Garry's Mod out of bounds effect
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             glfwSwapBuffers(window);
         }

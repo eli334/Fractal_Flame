@@ -1,10 +1,16 @@
-# Unapologetically using Google AI to write this 
+#[[
+Before running, run this command to install dependencies on Ubuntu:
+sudo apt update && sudo apt install -y libwayland-dev build-essential wayland-protocols libxkbcommon-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+]]
 
 cmake_minimum_required(VERSION 3.16)
 project(FractalFlame CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+
+
 
 # 1. Enable OpenMP (For CPU Parallel loops)
 find_package(OpenMP REQUIRED)
