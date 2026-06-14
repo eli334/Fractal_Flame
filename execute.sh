@@ -5,11 +5,11 @@
 set -e
 
 # 1. ONLY run the slow configuration step if the build folder doesn't exist
-if [ ! -d "build" ]; then
+if [[ ! -d "build" || "CMakeLists.txt" -nt "build/CMakeCache.txt" ]]; then
     echo "First-time setup: Configuring project and pulling dependencies..."
     cmake -B build -DCMAKE_BUILD_TYPE=Release
 else
-    echo "Build folder found. Skipping dependency configuration..."
+    echo "All good -- skipping dependency configuration..."
 fi
 
 echo "Compiling modified code..."
@@ -17,4 +17,4 @@ echo "Compiling modified code..."
 cmake --build build --config Release
 
 echo "Launching application..."
-./build/fractal_flame --gui
+LIBGL_ALWAYS_SOFTWARE=1 ./build/fractal_flame

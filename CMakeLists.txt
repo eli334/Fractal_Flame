@@ -1,27 +1,35 @@
 #[[
-Before running, run this command to install dependencies on Ubuntu:
+Before running, run this command to install dependencies on Ubuntu (CUDA has to be installed seperately -- ):
 sudo apt update && sudo apt install -y libwayland-dev build-essential wayland-protocols libxkbcommon-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
 ]]
 
 cmake_minimum_required(VERSION 3.16)
-project(FractalFlame CXX)
+project(FractalFlame CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(CUDAToolkit QUIET)
 
+if(CUDAToolkit_FOUND)
+    message(STATUS "CUDA found -- building with GPU support")
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+else()
+    message(STATUS "CUDA not found -- building CPU-only")
+endif()
 
-
-# 1. Enable OpenMP (For CPU Parallel loops)
+# Enable OpenMP
 find_package(OpenMP REQUIRED)
 
 # Include the CMake download engine
 include(FetchContent)
 
-# 2. Automatically Fetch GLFW from Github
+# Automatically Fetch GLFW from Github
 FetchContent_Declare(
     glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
     GIT_TAG        3.4
 )
 # Disable compilation of GLFW's unnecessary sample files
@@ -29,7 +37,8 @@ set(GLFW_BUILD_DOCS OFF CACHE INTERNAL "")
 set(GLFW_BUILD_TESTS OFF CACHE INTERNAL "")
 set(GLFW_BUILD_EXAMPLES OFF CACHE INTERNAL "")
 
-# 3. Automatically Fetch GLAD (OpenGL 3.3 Core Profile)
+
+# Automatically Fetch GLAD (OpenGL 3.3 Core Profile)
 FetchContent_Declare(
     glad
     GIT_REPOSITORY https://github.com/Dav1dde/glad.git
@@ -40,35 +49,60 @@ set(GLAD_GENERATOR "c" CACHE STRING "Language to generate binding for")
 
 FetchContent_Declare(
     imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        v1.92.8 # Target a stable version
 )
 
-# 4. Pull and prepare both libraries
+# Pull and prepare libraries
 FetchContent_MakeAvailable(glfw glad imgui)
 
-# 5. Define your executable (Only your own source code file remains!)
-add_executable(fractal_flame ./fractal_flame.cpp
-    # Core Dear ImGui logic files
+# Add each engine as a library to executable
+add_library(serial_engine OBJECT engines/serial_engine.cpp)
+target_compile_options(serial_engine PRIVATE ${OpenMP_CXX_FLAGS})
+
+add_library(openmp_engine OBJECT engines/openmp_engine.cpp)
+target_compile_options(openmp_engine PRIVATE ${OpenMP_CXX_FLAGS})
+
+# CUDA support
+if(CUDAToolkit_FOUND)
+    add_library(cuda_engine OBJECT engines/cuda_engine.cu)
+    set_target_properties(cuda_engine PROPERTIES CUDA_STANDARD 17)
+endif()
+
+# Define your executable (Only your own source code file remains!)
+add_executable(fractal_flame 
+    ./fractal_flame_frontend.cpp
+    
+    # ImGui logic files
     ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    
-    # Specific implementation backend bindings for your environment
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
+target_link_libraries(fractal_flame PRIVATE
+    $<TARGET_OBJECTS:serial_engine>
+    $<TARGET_OBJECTS:openmp_engine>
+)
 
-# 6. Expose ImGui and Backend headers to your compiler search path
+if(CUDAToolkit_FOUND)
+    target_link_libraries(fractal_flame PRIVATE
+        $<TARGET_OBJECTS:cuda_engine>
+        CUDA::cudart
+    )
+    target_compile_definitions(fractal_flame PRIVATE HAS_CUDA)
+endif()
+
+
+# Expose ImGui and Backend headers to your compiler search path
 target_include_directories(fractal_flame PRIVATE 
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
 
 
-# 7. Link everything (CMake tracks include headers and system graphics libs automatically!)
+# Link everything (CMake tracks include headers and system graphics libs automatically!)
 target_link_libraries(fractal_flame PRIVATE 
     OpenMP::OpenMP_CXX 
     glfw 
