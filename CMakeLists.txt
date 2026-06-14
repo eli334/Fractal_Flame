@@ -4,7 +4,7 @@ sudo apt update && sudo apt install -y libwayland-dev build-essential wayland-pr
 ]]
 
 cmake_minimum_required(VERSION 3.16)
-project(FractalFlame CXX CUDA)
+project(FractalFlame CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,6 +56,17 @@ FetchContent_Declare(
 # Pull and prepare libraries
 FetchContent_MakeAvailable(glfw glad imgui)
 
+add_library(imgui_lib STATIC
+    # ImGui logic files
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp 
+)
+target_link_libraries(imgui_lib PUBLIC glfw)
+
 # Add each engine as a library to executable
 add_library(serial_engine OBJECT engines/serial_engine.cpp)
 target_compile_options(serial_engine PRIVATE ${OpenMP_CXX_FLAGS})
@@ -71,16 +82,9 @@ endif()
 
 # Define your executable (Only your own source code file remains!)
 add_executable(fractal_flame 
-    ./fractal_flame_frontend.cpp
-    
-    # ImGui logic files
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ./fractal_flame_frontend.cpp    
 )
+
 target_link_libraries(fractal_flame PRIVATE
     $<TARGET_OBJECTS:serial_engine>
     $<TARGET_OBJECTS:openmp_engine>
@@ -96,14 +100,15 @@ endif()
 
 
 # Expose ImGui and Backend headers to your compiler search path
-target_include_directories(fractal_flame PRIVATE 
+target_include_directories(imgui_lib PUBLIC 
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
 
 
 # Link everything (CMake tracks include headers and system graphics libs automatically!)
-target_link_libraries(fractal_flame PRIVATE 
+target_link_libraries(fractal_flame PRIVATE
+    imgui_lib
     OpenMP::OpenMP_CXX 
     glfw 
     glad

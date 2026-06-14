@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <string>
+#include <cstdint>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -15,12 +15,24 @@
 
 // Fractal Flame frontend
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
-#include "./engines/engine.h" // Inherit the abstract class (might get rid of this later -- I don't think it has to be in the frontend)
+#include "./engines/engine.h" // Inherit the abstract class 
 
 struct UIConfig {
     bool debugInfo = true;
+    
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f;
+
+    uint16_t window_width = 1920, window_height = 1080;
+
+    uint16_t histogram_width, histogram_height;
+};  
+
+UIConfig conf; // global for ease of access
+
+struct FractalConfig {
+    uint8_t fractal; // these can be whatever I want, and I am not implementing 255 fractals
+
 };
 
 int main(int argc, char **argv ) { 
@@ -33,7 +45,7 @@ int main(int argc, char **argv ) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Fractal Flame Engine", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(conf.window_width, conf.window_height, "Fractal Flame Engine", NULL, NULL);
     printf("Window created!\r\n");
     
     if (!window) { glfwTerminate(); return -1; }
@@ -42,6 +54,10 @@ int main(int argc, char **argv ) {
     
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    // ImFont* font = io.Fonts->AddFontFromFileTTF("file.ttf", 14.0f);
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
@@ -51,7 +67,9 @@ int main(int argc, char **argv ) {
             | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
             | ImGuiWindowFlags_NoNav;
 
-    ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+
+    ImGuiTabBarFlags tab_flags = ImGuiTabBarFlags_NoTabListScrollingButtons;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -70,7 +88,7 @@ int main(int argc, char **argv ) {
         if(!settingsOpen) {
             ImGui::SetNextWindowPos({10, display.y - 40}, ImGuiCond_Always); // settings positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
-            ImGui::Begin("##gearbutton", nullptr, button_flags);
+            ImGui::Begin("##gearButton", nullptr, button_flags);
             
             if(ImGui::Button("[S]")) { 
                 settingsOpen = !settingsOpen;
@@ -78,8 +96,44 @@ int main(int argc, char **argv ) {
             ImGui::End();
         } else {
             ImGui::SetNextWindowPos({10, 40}, ImGuiCond_Always); // settings positioning
-            ImGui::SetNextWindowSize({200, display.y - 80}, ImGuiCond_Always);
-            ImGui::Begin("Settings", &settingsOpen, settings_flags);
+            ImGui::SetNextWindowSize({500, display.y - 80}, ImGuiCond_Always);
+            ImGui::Begin("Settings", &settingsOpen, settings_flags); // Contents of the Settings menu:
+            
+            const char* backends[] = { "Serial", "OpenMP", "CUDA" }; 
+            static int selectedBackend = 0;
+            
+            ImGui::PushFont(NULL, 18.0f);
+            ImGui::Text("Backend:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1); // fill available width
+            ImGui::Combo("##backendSelector", &selectedBackend, backends, IM_ARRAYSIZE(backends));
+            ImGui::PopFont();
+
+
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 6.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_TabBarBorderSize, 0.0f);
+
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f); // move blue tab line down by 12 pixels
+            if(ImGui::BeginTabBar("##settingsTabs", ImGuiTabBarFlags_None)) {
+                
+                ImGui::PushFont(NULL, 20.0f); 
+                if(ImGui::BeginTabItem("Transforms")) {
+                    
+
+                    ImGui::EndTabItem();
+                }
+
+                if(ImGui::BeginTabItem("UI")) {
+                    
+                    
+                    ImGui::EndTabItem();
+                }
+                ImGui::PopFont();
+                ImGui::EndTabBar();
+            }
+
+            ImGui::PopStyleVar(2);
             ImGui::End();
         }
         
