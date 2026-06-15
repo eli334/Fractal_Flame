@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#nvcc --compiler-options -fopenmp ./fractal_flame.cu -o ./fractal_flame
+#nvcc --compiler-options -fopenmp ./fractal_flame.cu -o ./fractal_flame (for reference)
 
 set -e
 
-# 1. ONLY run the slow configuration step if the build folder doesn't exist
+#  ONLY run the slow configuration step if the build folder doesn't exist or has been updated
 if [[ ! -d "build" || "CMakeLists.txt" -nt "build/CMakeCache.txt" ]]; then
     echo "First-time setup: Configuring project and pulling dependencies..."
     cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -13,7 +13,8 @@ else
 fi
 
 echo "Compiling modified code..."
-# 2. This command automatically figures out what changed and builds instantly!
+
+# This command automatically figures out what changed and builds quickly
 cmake --build build --config Release
 
 echo "Launching application..."

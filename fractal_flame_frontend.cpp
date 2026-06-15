@@ -18,24 +18,23 @@
 #include "./engines/engine.h" // Inherit the abstract class 
 
 struct UIConfig {
+    uint64_t* global_histogram = nullptr;
     bool debugInfo = true;
     
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f;
 
     uint16_t window_width = 1920, window_height = 1080;
-
-    uint16_t histogram_width, histogram_height;
 };  
 
-UIConfig conf; // global for ease of access
+UIConfig UIConf; // global for ease of access
+fractalSettings fractalConf;
+std::vector<Transform> transforms;
 
-struct FractalConfig {
-    uint8_t fractal; // these can be whatever I want, and I am not implementing 255 fractals
-
-};
+GLuint flameTexture = 0; // global Texture
 
 int main(int argc, char **argv ) { 
+    
     if (!glfwInit()) {
         printf("OpenGL unable to initialize.  Exiting...");
         return -1;
@@ -45,15 +44,26 @@ int main(int argc, char **argv ) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(conf.window_width, conf.window_height, "Fractal Flame Engine", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(UIConf.window_width, UIConf.window_height, "Fractal Flame Engine", NULL, NULL);
     printf("Window created!\r\n");
     
     if (!window) { glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     
+
+    glGenTextures(1, &flameTexture);
+    glBindTexture(GL_TEXTURE_2D, flameTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // mipmap stuff -- idrc
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexParameter.xhtml
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                fractalConf.histogram_width, fractalConf.histogram_height,
+                0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     ImGui::CreateContext();
-    ImGui::GetIO().IniFilename = nullptr;
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     // ImFont* font = io.Fonts->AddFontFromFileTTF("file.ttf", 14.0f);
@@ -71,6 +81,7 @@ int main(int argc, char **argv ) {
 
     ImGuiTabBarFlags tab_flags = ImGuiTabBarFlags_NoTabListScrollingButtons;
 
+    fractalConf.transforms = &transforms;
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -119,13 +130,41 @@ int main(int argc, char **argv ) {
                 
                 ImGui::PushFont(NULL, 20.0f); 
                 if(ImGui::BeginTabItem("Transforms")) {
-                    
+                    if(ImGui::Button("+")) {
+                        transforms.push_back(Transform{});
+                    }
+
+                    for(int i = 0; i < transforms.size(); i++) {
+                        ImGui::PushID(i); // important -- gives each slider a unique ID
+                        ImGui::SliderFloat("Weight", &transforms[i].weight, 0.0f, 1.0f);
+                        ImGui::SameLine();
+                        if(ImGui::Button("X")) {
+                            transforms.erase(transforms.begin() + i); // removes 
+                            i--;
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::Separator();
+                    static bool hasFinalTransform = false;
+                    ImGui::Checkbox("Final transform", &hasFinalTransform);
+                    if(hasFinalTransform) {
+                        uint8_t i = transforms.size()+1;
+                        ImGui::PushID(i); // important -- gives each slider a unique ID
+                        ImGui::SliderFloat("Weight", &transforms[i].weight, 0.0f, 1.0f);
+                        ImGui::SameLine();
+                        if(ImGui::Button("X")) {
+                            transforms.erase(transforms.begin() + i); // removes 
+                        }
+                        ImGui::PopID();
+                    }
+
 
                     ImGui::EndTabItem();
                 }
 
                 if(ImGui::BeginTabItem("UI")) {
-                    
+                    // histogram width, height
+                    // window width, height?
                     
                     ImGui::EndTabItem();
                 }
@@ -152,6 +191,7 @@ int main(int argc, char **argv ) {
     glfwTerminate();
 
     printf("Exiting gracefully...");
+    delete [] UIConf.global_histogram; // gonna add file saving options for the fractals later
     return 0;
 }
 
