@@ -62,15 +62,15 @@ class Serial_Engine : public Engine {
         };
 
         void plot() {
-            int plotX = (int)((current.x + 1) / 2 * settings.global_histogram.width);
-            int plotY = (int)((current.y + 1) / 2 * settings.global_histogram.height);
+            int plotX = (int)((current.x - settings.viewport.minX) / (settings.viewport.maxX - settings.viewport.minX) * settings.global_histogram.width);
+            int plotY = (int)((current.y - settings.viewport.minY) / (settings.viewport.maxX - settings.viewport.minX) * settings.global_histogram.height);
             
             // static int count = 0;
             // if(count++ < 20) {
             //        printf("plotX: %d, plotY: %d, x: %f, y: %f\n", plotX, plotY, current.x, current.y);
             // }
-            if(plotX >= 0 && plotX <= settings.global_histogram.width &&
-               plotY >= 0 && plotY <= settings.global_histogram.height) {
+            if(plotX >= 0 && plotX < (int)settings.global_histogram.width &&
+               plotY >= 0 && plotY < (int)settings.global_histogram.height) {
                 settings.global_histogram.data[plotY * settings.global_histogram.width + plotX]++;
                }
         }
@@ -133,16 +133,25 @@ class Serial_Engine : public Engine {
             return (int)settings.transforms.size() - 1; 
         };
 
-        Coordinate calculate(int funcIndex) { // current is a private variable
+        Coordinate calculate(int funcIndex) {
+            Transform& t = settings.transforms[funcIndex];
+
+            // apply affine transform first
+            Coordinate affine = {
+                t.a * current.x + t.b * current.y + t.c,
+                t.d * current.x + t.e * current.y + t.f 
+            }; // (x, y) = (a*x+b*y+c), (d*x+e*y+f))
+            // with identity matrix this maps to
+            // (x, y) = (x, y) -- this is why it's called that
             switch(funcIndex) {
                 case 0: // Identity
-                    return variation_identity(current);
+                    return variation_identity(affine);
                 case 1: // Sinusoidal
-                    return variation_sinusoidal(current);
+                    return variation_sinusoidal(affine);
                 case 2: // Spherical
-                    return variation_spherical(current);
+                    return variation_spherical(affine);
                 default:
-                    return {0, 0};
+                    return affine;
             }
         }
 

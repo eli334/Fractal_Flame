@@ -15,6 +15,10 @@
 struct Transform {
     float weight = 1.0f; // sumOfWeights / transform_i.weight = probability that transform_i gets picked
     int variationIndex = 0; // just pick one for now
+
+    // affine coefficients - identity matrix by default
+    double a = 1.0, b = 0.0, c = 0.0;
+    double d = 0.0, e = 1.0, f = 0.0;
 };
 
 struct variationDef {
@@ -60,13 +64,22 @@ class Histogram {
         Histogram& operator=(const Histogram&) = delete; // don't need assignment
 };
 
+struct Viewport { // it's a math thing more than a rendering thing, so it's baked into the engine
+    double minX = -1.0, maxX = 1.0;
+    double minY = -1.0, maxY = 1.0;
+};
+
 struct fractalSettings {
     int seed = 0;
     float totalWeight = 1.0; 
+    
     Histogram<uint64_t> global_histogram;
+    
     std::vector<Transform> transforms;
+    
     bool hasFinalTransform;
     Transform finalTransform;
+    Viewport viewport;
 };
 
 class Engine {

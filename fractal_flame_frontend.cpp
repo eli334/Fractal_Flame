@@ -104,8 +104,11 @@ int main(int argc, char **argv ) {
         | ImGuiWindowFlags_NoNav;
 
     const ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-
+    
     ImGuiTabBarFlags tab_flags = ImGuiTabBarFlags_NoTabListScrollingButtons;
+
+    static bool wasSettingsOpen = false;
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
@@ -130,8 +133,10 @@ int main(int argc, char **argv ) {
         ImGui::Image((ImTextureID)(intptr_t)flameTexture, display);
         ImGui::End();
         ImGui::PopStyleVar();
-        
+
+
         if(!settingsOpen) {
+            
             ImGui::SetNextWindowPos({10, display.y - 40}, ImGuiCond_Always); // settings positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             ImGui::Begin("##gearButton", nullptr, button_flags);
@@ -207,10 +212,6 @@ int main(int argc, char **argv ) {
                     if(ImGui::Button("+ Add Transform")) {
                         Transform newTransform = {1.0, 0}; // New 
                         fractalConf.transforms.push_back(newTransform);
-                        
-                        if(fractal_engine) {
-                            fractal_engine->setTransforms(fractalConf.transforms);
-                        }
 
                         fractalConf.totalWeight = 0;
                         for(int i = 0; i < fractalConf.transforms.size(); i++) {
@@ -229,22 +230,28 @@ int main(int argc, char **argv ) {
                             fractalConf.transforms.erase(fractalConf.transforms.begin() + i); 
                             i--;
                         }
+
+                        if(ImGui::CollapsingHeader("Affine")) {
+                            ImGui::InputDouble("a", &fractalConf.transforms[i].a, 0.01, 0.1, "%.3f");
+                            ImGui::InputDouble("b", &fractalConf.transforms[i].b, 0.01, 0.1, "%.3f");
+                            ImGui::InputDouble("c", &fractalConf.transforms[i].c, 0.01, 0.1, "%.3f");
+                            ImGui::InputDouble("d", &fractalConf.transforms[i].d, 0.01, 0.1, "%.3f");
+                            ImGui::InputDouble("e", &fractalConf.transforms[i].e, 0.01, 0.1, "%.3f");
+                            ImGui::InputDouble("f", &fractalConf.transforms[i].f, 0.01, 0.1, "%.3f");
+
+                        }
+
                         ImGui::PopID();
                     }
                     ImGui::Separator();
                     static bool hasFinalTransform = false;
                     ImGui::Checkbox("Final transform", &hasFinalTransform);
-                    if(hasFinalTransform) {
-                        uint8_t i = fractalConf.transforms.size()+1;
-                        ImGui::PushID(i); // important -- gives each slider a unique ID
-                        ImGui::Combo("##transformSelector", &fractalConf.transforms[i].variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
+                    if(hasFinalTransform) {;
+                        ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
                         ImGui::Text("Weight:");
                         ImGui::SameLine();
-                        ImGui::SliderFloat("##weight", &fractalConf.transforms[i].weight, 0.0f, 10.0f);
+                        ImGui::SliderFloat("##weight", &fractalConf.finalTransform.weight, 0.0f, 10.0f);
                         ImGui::SameLine();
-                        if(ImGui::Button("X")) {
-                            fractalConf.transforms.pop_back(); // removes back element  
-                        }
                         ImGui::PopID();
                     }
 
@@ -254,8 +261,22 @@ int main(int argc, char **argv ) {
 
                 if(ImGui::BeginTabItem("UI")) {
                     // histogram width, height
-                    // window width, height?
+                    // viewport width, height
+                    ImGui::Text("View Min X: ");
+                    ImGui::SameLine();
+                    ImGui::InputDouble("##viewMinX", &fractalConf.viewport.minX, 0.1, 1.0, "%.2f");
                     
+                    ImGui::Text("View Max X: ");
+                    ImGui::SameLine();
+                    ImGui::InputDouble("##viewMaxX", &fractalConf.viewport.maxX, 0.1, 1.0, "%.2f");
+                    
+                    ImGui::Text("View Min Y: ");
+                    ImGui::SameLine();
+                    ImGui::InputDouble("##viewMinY", &fractalConf.viewport.minY, 0.1, 1.0, "%.2f");
+                    
+                    ImGui::Text("View Max Y: ");
+                    ImGui::SameLine();
+                    ImGui::InputDouble("##viewMaxY", &fractalConf.viewport.maxY, 0.1, 1.0, "%.2f");
                     ImGui::EndTabItem();
                 }
                 ImGui::PopFont();
@@ -264,12 +285,16 @@ int main(int argc, char **argv ) {
 
             ImGui::PopStyleVar(2);
 
-            if(false) {
-
-            }
+        
             ImGui::End();
         }
         
+        if(wasSettingsOpen && !settingsOpen) {
+            if(fractal_engine) {
+                fractal_engine->setTransforms(fractalConf.transforms);
+            }
+        }            
+        wasSettingsOpen = settingsOpen;
 
         // Render
         ImGui::Render();
