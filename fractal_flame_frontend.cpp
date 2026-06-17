@@ -136,9 +136,18 @@ int main(int argc, char **argv ) {
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             ImGui::Begin("##gearButton", nullptr, button_flags);
             
+            if(fractal_engine && fractal_engine->getStatus()) {
+                ImGui::BeginDisabled();
+            }
+
             if(ImGui::Button("[S]")) { 
                 settingsOpen = !settingsOpen;
             }
+
+            if(fractal_engine && fractal_engine->getStatus()) {
+                ImGui::EndDisabled();
+            }
+
             ImGui::SameLine();
             ImGui::End();
             
@@ -198,6 +207,11 @@ int main(int argc, char **argv ) {
                     if(ImGui::Button("+ Add Transform")) {
                         Transform newTransform = {1.0, 0}; // New 
                         fractalConf.transforms.push_back(newTransform);
+                        
+                        if(fractal_engine) {
+                            fractal_engine->setTransforms(fractalConf.transforms);
+                        }
+
                         fractalConf.totalWeight = 0;
                         for(int i = 0; i < fractalConf.transforms.size(); i++) {
                             fractalConf.totalWeight += fractalConf.transforms[i].weight;
@@ -285,7 +299,7 @@ uint64_t* reallocateHistogram() {
 
 void uploadHistogram() { // function to push the global_histogram to opengl
     uint64_t* hist = fractalConf.global_histogram.data;
-    int width = fractalConf.global_histogram.getWidth(), height = fractalConf.global_histogram.getHeight();
+    int width = fractalConf.global_histogram.width, height = fractalConf.global_histogram.height;
 
     uint64_t maxVal = 0;
     for(int i = 0; i < width*height; i++) {
@@ -296,16 +310,23 @@ void uploadHistogram() { // function to push the global_histogram to opengl
     if(maxVal == 0) return; // don't render when nothing has generated yet
 
     std::vector<uint8_t> pixels(width * height * 4); // OpenGL wants pixels as RGBA -- initialize as all 0s
-
+        
+    double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double -- 
+    
     for(int i = 0; i < width*height; i++) {
         // 8 bits per pixel
-        // linearly interoplate between 0 and maxVal
-        uint8_t brightness = (uint8_t)((hist[i] * 255) / maxVal);
-        pixels[i*4+0] = brightness;
-        pixels[i*4+1] = brightness;
-        pixels[i*4+2] = brightness;
+        // logarithmically map brightness
+        double brightness = std::log(1.0 + (double)hist[i]) / logMax; // log of hist[i] for every index of the entire histogram
+        // one million log() operations per frame (oof!)
+        // dividing by the max value makes the max 1 and the rest a number between 0 and 1
+        brightness = std::pow(brightness, 1.0/2.2); // gamma correction -- definitely a faster way to do this using fancy CPU features (does the compiler do that automatically?)
+        uint8_t pixel = (uint8_t)(brightness * 255.0);
+        pixels[i*4+0] = pixel;  // grayscale for now
+        pixels[i*4+1] = pixel;  // grayscale for now
+        pixels[i*4+2] = pixel;  // grayscale for now
         pixels[i*4+3] = 255;
     }
+    //printf("uploading, maxVal=%lu\n", maxVal);
     glBindTexture(GL_TEXTURE_2D, flameTexture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                     GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());

@@ -49,19 +49,45 @@ class Serial_Engine : public Engine {
         
         void step() {
             int func = pickFunction();
-            current = calculate(func);
-
-            if(!settings.transforms.empty()) {
-
+            if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
+                return;
             }
+            current = calculate(func);
+            
+            plot(); // plots the current point if within histogram
 
             if(settings.hasFinalTransform) {
 
             }
         };
 
+        void plot() {
+            int plotX = (int)((current.x + 1) / 2 * settings.global_histogram.width);
+            int plotY = (int)((current.y + 1) / 2 * settings.global_histogram.height);
+            
+            // static int count = 0;
+            // if(count++ < 20) {
+            //        printf("plotX: %d, plotY: %d, x: %f, y: %f\n", plotX, plotY, current.x, current.y);
+            // }
+            if(plotX >= 0 && plotX <= settings.global_histogram.width &&
+               plotY >= 0 && plotY <= settings.global_histogram.height) {
+                settings.global_histogram.data[plotY * settings.global_histogram.width + plotX]++;
+               }
+        }
+
         bool setTransforms(std::vector<Transform> TFList) {
+            printf("setTransforms called with %d transforms\n", (int)TFList.size());
             settings.transforms = TFList;
+            
+            
+
+            settings.totalWeight = 0;
+            for(Transform t : settings.transforms) {
+                settings.totalWeight += t.weight;
+            }
+            printf("totalWeight: %f\n", settings.totalWeight);
+
+            settings.global_histogram.clear(); // clear the histogram for the new transforms
             return true;
         }
 
@@ -103,8 +129,8 @@ class Serial_Engine : public Engine {
                 }
             }
             
-            throw("unreachable state in theory");
-            return -1;
+            //throw("unreachable state in theory");
+            return (int)settings.transforms.size() - 1; 
         };
 
         Coordinate calculate(int funcIndex) { // current is a private variable
