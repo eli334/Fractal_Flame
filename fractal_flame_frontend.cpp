@@ -51,7 +51,55 @@ std::unique_ptr<Engine> selectBackend(int selection, int threadCount, fractalSet
 
 fractalSettings fractalConf;
 GLuint flameTexture = 0; // global Texture id
+
+struct Color { // pixel colors
+    uint8_t r = 0, g = 0, b = 0;
+};
+
+struct ColorStop {
+    double position; // [0, 1]
+    Color color;
+};
+
+std::vector<ColorStop> paletteStops;
+
+void buildPalette(Color* palette, int size, std::vector<ColorStop>& stops) {
+    // for each stop in paletteStops -- decided in UI:
+    for(int i = 0; i < size; i++) {
+        double t = (double)i / (size-1); // t is a number between 0 and 1, inclusive
+        
+        ColorStop* prev = &stops[0];
+        ColorStop* next = &stops[stops.size()-1];
+        // find where t is
+        for(int stop = 0; stop < stops.size() - 1; stop++) {
+            if(t >= stops[stop].position && t <= stops[stop+1].position) { // for each adjacent pair of stops, check if t is between them 
+                prev = &stops[stop];
+                next = &stops[stop + 1]; // t is between prev and next
+            }
+        }
+
+        // determine colors with lerp between stops
+        double width = next->position - prev->position; // width of the color gradient to fill
+        double blendProportion = t - prev->position / width; // (t - prev->position) -- a number with how strongly to blend the color at prev and the color at next (.5 is equal) 
+
+        palette[i].r = (uint8_t)(prev->color.r + blendProportion * (next->color.r - prev->color.r));
+        palette[i].g = (uint8_t)(prev->color.g + blendProportion * (next->color.g - prev->color.g));
+        palette[i].b = (uint8_t)(prev->color.b + blendProportion * (next->color.b - prev->color.b));
+    }
+    
+}
+
+
+
 void uploadHistogram();
+
+
+
+
+
+
+
+
 
 int main(int argc, char **argv ) { 
     
@@ -213,9 +261,16 @@ int main(int argc, char **argv ) {
                         Transform newTransform = {1.0, 0}; // New 
                         fractalConf.transforms.push_back(newTransform);
 
+                        int numTransforms = fractalConf.transforms.size();
+
                         fractalConf.totalWeight = 0;
-                        for(int i = 0; i < fractalConf.transforms.size(); i++) {
+                        for(int i = 0; i < numTransforms; i++) {
                             fractalConf.totalWeight += fractalConf.transforms[i].weight;
+                        }
+                        // update transform colors
+                        
+                        for(int i = 0; i < numTransforms; i++) {
+                            fractalConf.transforms[i].color = (double)i / (double)(numTransforms - 1);
                         }
                     }
 
@@ -224,7 +279,7 @@ int main(int argc, char **argv ) {
                         ImGui::Combo("##transformSelector", &fractalConf.transforms[i].variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
                         ImGui::Text("Weight:");
                         ImGui::SameLine();
-                        ImGui::SliderFloat("##weight", &fractalConf.transforms[i].weight, 0.0f, 10.0f);
+                        ImGui::DragFloat("##weight", &fractalConf.transforms[i].weight, 0.1f, 0.0f, 10.0f, "%.1f");
                         ImGui::SameLine();
                         if(ImGui::Button("X")) {
                             fractalConf.transforms.erase(fractalConf.transforms.begin() + i); 
@@ -244,15 +299,13 @@ int main(int argc, char **argv ) {
                         ImGui::PopID();
                     }
                     ImGui::Separator();
-                    static bool hasFinalTransform = false;
-                    ImGui::Checkbox("Final transform", &hasFinalTransform);
-                    if(hasFinalTransform) {;
+                    ImGui::Checkbox("Final transform", &fractalConf.hasFinalTransform);
+                    if(&fractalConf.hasFinalTransform) {;
                         ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
                         ImGui::Text("Weight:");
                         ImGui::SameLine();
-                        ImGui::SliderFloat("##weight", &fractalConf.finalTransform.weight, 0.0f, 10.0f);
+                        ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
                         ImGui::SameLine();
-                        ImGui::PopID();
                     }
 
 
@@ -262,21 +315,61 @@ int main(int argc, char **argv ) {
                 if(ImGui::BeginTabItem("UI")) {
                     // histogram width, height
                     // viewport width, height
-                    ImGui::Text("View Min X: ");
-                    ImGui::SameLine();
-                    ImGui::InputDouble("##viewMinX", &fractalConf.viewport.minX, 0.1, 1.0, "%.2f");
                     
-                    ImGui::Text("View Max X: ");
+                    ImGui::Text("Seed");
                     ImGui::SameLine();
-                    ImGui::InputDouble("##viewMaxX", &fractalConf.viewport.maxX, 0.1, 1.0, "%.2f");
+                    ImGui::InputInt("##seed", &fractalConf.seed, 1, 100);
+
+                    float viewport[4] = {
+                        (float)fractalConf.viewport.minX,
+                        (float)fractalConf.viewport.maxX,
+                        (float)fractalConf.viewport.minY,
+                        (float)fractalConf.viewport.maxY
+                    };
+
+                    ImGui::Text("minX, maxX, minY, maxY");
+                    if(ImGui::DragFloat4("##viewport", viewport)) {
+                        fractalConf.viewport.minX = viewport[0];
+                        fractalConf.viewport.maxX = viewport[1];
+                        fractalConf.viewport.minY = viewport[2];
+                        fractalConf.viewport.maxY = viewport[3];
+                    };
+                    // ImGui::Text("View Min X: ");
+                    // ImGui::SameLine();
+                    // ImGui::InputDouble("##viewMinX", &fractalConf.viewport.minX, 0.1, 1.0, "%.2f");
                     
-                    ImGui::Text("View Min Y: ");
-                    ImGui::SameLine();
-                    ImGui::InputDouble("##viewMinY", &fractalConf.viewport.minY, 0.1, 1.0, "%.2f");
+                    // ImGui::Text("View Max X: ");
+                    // ImGui::SameLine();
+                    // ImGui::InputDouble("##viewMaxX", &fractalConf.viewport.maxX, 0.1, 1.0, "%.2f");
+                    // ImGui::Text("View Min Y: ");
+                    // ImGui::SameLine();
+                    // ImGui::InputDouble("##viewMinY", &fractalConf.viewport.minY, 0.1, 1.0, "%.2f");
                     
-                    ImGui::Text("View Max Y: ");
+                    // ImGui::Text("View Max Y: ");
+                    // ImGui::SameLine();
+                    // ImGui::InputDouble("##viewMaxY", &fractalConf.viewport.maxY, 0.1, 1.0, "%.2f");
+
+                    ImGui::Separator();
+                    ImGui::Text("Note: RAM use is W*H*(64+32)");
+                    int histWidth = (int)fractalConf.global_histogram.width, histHeight = (int)fractalConf.global_histogram.height;
+                    bool histDimChanged = false;
+                    ImGui::Text("Histogram Width");
                     ImGui::SameLine();
-                    ImGui::InputDouble("##viewMaxY", &fractalConf.viewport.maxY, 0.1, 1.0, "%.2f");
+                    histDimChanged |= ImGui::InputInt("##histWidth", &histWidth, 1, 100);
+                    ImGui::Text("Histogram Height");
+                    ImGui::SameLine();
+                    histDimChanged |= ImGui::InputInt("##histHeight", &histHeight, 1, 100);
+
+                    if(histDimChanged && (histWidth > 0 && histHeight > 0)) { // width and height are > 0; if == 0, then no malloc (new) happens
+                        fractalConf.global_histogram.resize(histWidth, histHeight);
+
+                        glBindTexture(GL_TEXTURE_2D, flameTexture);
+                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, histWidth, histHeight, // resize texture to new histogram size
+                                    0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                        glBindTexture(GL_TEXTURE_2D, 0);
+                    }
+
+                    
                     ImGui::EndTabItem();
                 }
                 ImGui::PopFont();
@@ -310,14 +403,13 @@ int main(int argc, char **argv ) {
     glfwTerminate();
 
     printf("Exiting gracefully...");
-    delete [] UIConf.global_histogram; // gonna add file saving options for the fractals later
     return 0;
 }
 
 
 
 uint64_t* reallocateHistogram() {
-    std::unique_ptr<Histogram<uint64_t>> a; 
+    std::unique_ptr<Histogram<uint64_t>> a(new Histogram<uint64_t>()); 
 
     return a->data;
 }
@@ -334,8 +426,9 @@ void uploadHistogram() { // function to push the global_histogram to opengl
     }
     if(maxVal == 0) return; // don't render when nothing has generated yet
 
-    std::vector<uint8_t> pixels(width * height * 4); // OpenGL wants pixels as RGBA -- initialize as all 0s
-        
+    static std::vector<uint8_t> pixels(width * height * 4); // OpenGL wants pixels as RGBA -- initialize as all 0s
+    pixels.resize(width * height * 4); // if canvas size changes, resize pixels array
+
     double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double -- 
     
     for(int i = 0; i < width*height; i++) {

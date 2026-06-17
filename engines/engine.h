@@ -15,6 +15,7 @@
 struct Transform {
     float weight = 1.0f; // sumOfWeights / transform_i.weight = probability that transform_i gets picked
     int variationIndex = 0; // just pick one for now
+    float color = 0;
 
     // affine coefficients - identity matrix by default
     double a = 1.0, b = 0.0, c = 0.0;
@@ -29,6 +30,7 @@ struct variationDef {
 
 struct Coordinate {
     double x, y;
+    double color = 0.0;
 };
 
 
@@ -38,10 +40,12 @@ template<typename T>
 class Histogram {
     public:
         uint32_t width = 1000, height = 1000;
-        uint64_t* data = nullptr;
+        T* data = nullptr;
+        float* colorData = nullptr;
         
         Histogram(uint32_t desiredWidth = 1000, uint32_t desiredHeight = 1000) : width(desiredWidth), height(desiredHeight) {
             data = new T[width * height]();
+            colorData = new float[width * height]();
         }
 
         uint32_t getWidth() const {
@@ -54,10 +58,23 @@ class Histogram {
 
         void clear() {
             memset(data, 0, width * height * sizeof(T));
+            memset(colorData, 0, width * height * sizeof(float));
+        }
+
+        void resize(int newWidth, int newHeight) {
+            delete [] data;
+            delete [] colorData;
+
+            width = (uint32_t) newWidth;
+            height = (uint32_t) newHeight;
+
+            data = new T[width * height]();
+            colorData = new float[width*height]();
         }
 
         ~Histogram() {
             delete [] data;
+            delete [] colorData;
         }
 
         Histogram(const Histogram&) = delete; // don't want or need copy constructor

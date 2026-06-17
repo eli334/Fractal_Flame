@@ -33,6 +33,7 @@ class Serial_Engine : public Engine {
         void setup(int seed = 0) {
             current.x = dist(rng); // starting point
             current.y = dist(rng); 
+            current.color = unitDist(rng);
         }
         void start() {
             running = true;
@@ -52,6 +53,9 @@ class Serial_Engine : public Engine {
             if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
                 return;
             }
+
+            current.color = (current.color + settings.transforms[func].color) / 2.0;
+
             current = calculate(func);
             
             plot(); // plots the current point if within histogram
@@ -71,16 +75,15 @@ class Serial_Engine : public Engine {
             // }
             if(plotX >= 0 && plotX < (int)settings.global_histogram.width &&
                plotY >= 0 && plotY < (int)settings.global_histogram.height) {
-                settings.global_histogram.data[plotY * settings.global_histogram.width + plotX]++;
-               }
+                int index = plotY * settings.global_histogram.width + plotX;
+                settings.global_histogram.data[index]++;
+                settings.global_histogram.colorData[index] += current.color;
+            }
         }
 
         bool setTransforms(std::vector<Transform> TFList) {
             printf("setTransforms called with %d transforms\n", (int)TFList.size());
             settings.transforms = TFList;
-            
-            
-
             settings.totalWeight = 0;
             for(Transform t : settings.transforms) {
                 settings.totalWeight += t.weight;
@@ -117,8 +120,7 @@ class Serial_Engine : public Engine {
         Coordinate current;
         std::mt19937_64 rng; // random number generator, set to 'seed' when run
         std::uniform_real_distribution<double> dist{-1.0, 1.0};   // for x, y starting point
-        std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates and step(), picking from weighted functions
-
+        std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates
         int pickFunction() {
             double i = unitDist(rng) * settings.totalWeight; // a number from 0 to totalWeight
             float cumulativeWeight = 0;
