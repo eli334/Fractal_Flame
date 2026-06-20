@@ -7,6 +7,8 @@
 #include <random>
 #include <math.h>
 #include <memory>
+#include <cfloat>
+#include <thread> 
 
 // Abstract class for all Fractal Flame rendering engines 
 // CPU, OpenMP, and CUDA implementations all inherit from this
@@ -30,7 +32,7 @@ struct variationDef {
 
 struct Coordinate {
     double x, y;
-    double color = 0.0;
+    float color = 0.0;
 };
 
 
@@ -114,8 +116,43 @@ class Engine {
         virtual void stop() = 0;
 
         virtual bool getStatus() = 0; // True if running, false if not
+        Coordinate getCurrent() {
+            return current;
+        };
+
+        void calculateViewport() {
+            std::thread t([this]() 
+            {          // [this] is the lambda's capture -- it gets the object "this", which would be the implemented engine's location in memory
+                double minX = DBL_MAX, maxX = -DBL_MAX, minY = DBL_MAX, maxY = -DBL_MAX; // max representable size of double (1.8e308 I think? Balatro's max score)
+                for(int i = 0; i < 1000; i++) {
+                    this->step();
+                    Coordinate c = this->getCurrent();
+
+                    if(c.x < minX) {
+                        minX = c.x;
+                    }
+                    
+                    if(c.x > maxX) {
+                        maxX = c.x;
+                    }
+                    
+                    if(c.y < minY) {
+                        minY = c.y;
+                    }
+                    
+                    if(c.y > maxY) {
+                        maxY = c.y;
+                    } 
+                    
+                }
+                settings.viewport = {minX, maxX, minY, maxY};
+            });
+            t.join(); // join thread
+            settings.global_histogram.clear();
+        }
     protected:
         fractalSettings& settings;
+        Coordinate current;
 };
 
 Engine* createSerialEngine(fractalSettings& config);

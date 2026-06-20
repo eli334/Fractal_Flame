@@ -1,5 +1,4 @@
 #include "./engine.h"
-#include <thread> // for serial implementation -- it runs on a single thread for the engine, with a seperate render thread for the frontend
 
 // Implementing the "Variations" from the original flam3 paper (https://flam3.com/flame_draves.pdf - see Appendix)
 
@@ -28,18 +27,19 @@ class Serial_Engine : public Engine {
     public:
         Serial_Engine(fractalSettings& config) : Engine(config), rng(config.seed) {
             setup();
-            };
+        };
 
         void setup(int seed = 0) {
             current.x = dist(rng); // starting point
             current.y = dist(rng); 
             current.color = unitDist(rng);
         }
+
         void start() {
             running = true;
             workingThread = std::thread(&Serial_Engine::workerLoop, this);
             std::cout << "Spawned thread with ID " << workingThread.get_id() << "!" << std::endl; 
-        };
+        }
 
         void stop() {
             std::cout << "Killing thread ID: " << workingThread.get_id() << std::endl; 
@@ -73,7 +73,7 @@ class Serial_Engine : public Engine {
             // if(count++ < 20) {
             //        printf("plotX: %d, plotY: %d, x: %f, y: %f\n", plotX, plotY, current.x, current.y);
             // }
-            if(plotX >= 0 && plotX < (int)settings.global_histogram.width &&
+            if(plotX >= 0 && plotX < (int)settings.global_histogram.width && // if within bounds of histogram:
                plotY >= 0 && plotY < (int)settings.global_histogram.height) {
                 int index = plotY * settings.global_histogram.width + plotX;
                 settings.global_histogram.data[index]++;
@@ -117,10 +117,10 @@ class Serial_Engine : public Engine {
     private:
         bool running = false;
         std::thread workingThread;
-        Coordinate current;
         std::mt19937_64 rng; // random number generator, set to 'seed' when run
         std::uniform_real_distribution<double> dist{-1.0, 1.0};   // for x, y starting point
         std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates
+        
         int pickFunction() {
             double i = unitDist(rng) * settings.totalWeight; // a number from 0 to totalWeight
             float cumulativeWeight = 0;
@@ -144,7 +144,7 @@ class Serial_Engine : public Engine {
                 t.d * current.x + t.e * current.y + t.f 
             }; // (x, y) = (a*x+b*y+c), (d*x+e*y+f))
             // with identity matrix this maps to
-            // (x, y) = (x, y) -- this is why it's called that
+            // (x, y) = (x, y)
             switch(funcIndex) {
                 case 0: // Identity
                     return variation_identity(affine);
