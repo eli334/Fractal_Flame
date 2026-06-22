@@ -25,86 +25,63 @@ Coordinate variation_spherical(Coordinate c) {
 
 class Serial_Engine : public Engine {
     public:
-        Serial_Engine(fractalSettings& config) : Engine(config), rng(config.seed) {
+        Serial_Engine() : Engine() {
             setup();
         };
 
+        Coordinate getStartingCoordinate() {
+            return {dist(rng), dist(rng), unitDist(rng)};
+        }
+
         void setup(int seed = 0) {
-            current.x = dist(rng); // starting point
-            current.y = dist(rng); 
-            current.color = unitDist(rng);
+            current = getStartingCoordinate();
+            
         }
 
         void start() {
             running = true;
-            workingThread = std::thread(&Serial_Engine::workerLoop, this);
-            std::cout << "Spawned thread with ID " << workingThread.get_id() << "!" << std::endl; 
+            
         }
 
         void stop() {
-            std::cout << "Killing thread ID: " << workingThread.get_id() << std::endl; 
             running = false;
-            workingThread.join(); // let working thread clean up
-            printf("Thread killed!\n");
+            if(workingThread.joinable()) {
+                workingThread.join();
+            }
         }
         
-        void step() {
+        Coordinate stepNoPlot(Coordinate c) {
             int func = pickFunction();
-            if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
-                return;
+            if(func <= 0) { // there are no transforms selected but the user pressed > -- do nothing
+                return c;
             }
-
-            current.color = (current.color + settings.transforms[func].color) / 2.0;
-
+            c.color = (c.color + transforms[func].color) / 2.0;
             current = calculate(func);
-            
-            plot(); // plots the current point if within histogram
+            return current;
+        }
 
-            if(settings.hasFinalTransform) {
+        void step(Coordinate c) {
+            current = stepNoPlot(c);
+            if(hasFinalTransform) {
 
             }
+            plot(c); // plots the current point if within histogram
         };
 
-        void plot() {
-            int plotX = (int)((current.x - settings.viewport.minX) / (settings.viewport.maxX - settings.viewport.minX) * settings.global_histogram.width);
-            int plotY = (int)((current.y - settings.viewport.minY) / (settings.viewport.maxX - settings.viewport.minX) * settings.global_histogram.height);
+        void plot(Coordinate pointToPlot) {
+            int plotX = (int)((pointToPlot.x - viewport.minX) / (viewport.maxX - viewport.minX) * globalHistogram.width);
+            int plotY = (int)((pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY) * globalHistogram.height);
             
-            // static int count = 0;
-            // if(count++ < 20) {
-            //        printf("plotX: %d, plotY: %d, x: %f, y: %f\n", plotX, plotY, current.x, current.y);
-            // }
-            if(plotX >= 0 && plotX < (int)settings.global_histogram.width && // if within bounds of histogram:
-               plotY >= 0 && plotY < (int)settings.global_histogram.height) {
-                int index = plotY * settings.global_histogram.width + plotX;
-                settings.global_histogram.data[index]++;
-                settings.global_histogram.colorData[index] += current.color;
+            if(plotX >= 0 && plotX < globalHistogram.width && // if within bounds of histogram:
+               plotY >= 0 && plotY < globalHistogram.height) {
+                int index = plotY * globalHistogram.width + plotX;
+                globalHistogram.data[index].hits++;
+                globalHistogram.data[index].color += pointToPlot.color;
             }
         }
 
-        bool setTransforms(std::vector<Transform> TFList) {
-            printf("setTransforms called with %d transforms\n", (int)TFList.size());
-            settings.transforms = TFList;
-            settings.totalWeight = 0;
-            for(Transform t : settings.transforms) {
-                settings.totalWeight += t.weight;
-            }
-            printf("totalWeight: %f\n", settings.totalWeight);
-
-            settings.global_histogram.clear(); // clear the histogram for the new transforms
-            return true;
-        }
-
-        void setSeed(int seed) {
-            // frontend frees old histogram
-            settings.seed = seed;
-        }
-
-        bool getStatus() {
-            return running;
-        }
-
-        std::vector<variationDef> getSupportedVariations() { // updated by me, per engine, for frontend purposes
-            std::vector<variationDef> supportedVariations = {
+        std::vector<VariationDef> getSupportedVariations() { // updated by me, per engine, for frontend purposes
+            std::vector<VariationDef> supportedVariations = {
                 {0, "Identity", "x, y"},
                 {1, "Sinusoidal", "sin(x), sin(y)"},
                 {2, "Spherical", "x / r^2, y / r^2"}
@@ -113,7 +90,6 @@ class Serial_Engine : public Engine {
             return supportedVariations;
         }
 
-        // ~Serial_Engine() {}
     private:
         bool running = false;
         std::thread workingThread;
@@ -122,26 +98,26 @@ class Serial_Engine : public Engine {
         std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates
         
         int pickFunction() {
-            double i = unitDist(rng) * settings.totalWeight; // a number from 0 to totalWeight
+            double i = unitDist(rng) * getTotalWeight(); // a number from 0 to totalWeight
             float cumulativeWeight = 0;
-            for(int func = 0; func < settings.transforms.size(); func++) { // [0, slice0), (slice0, slice1)..., (sliceN-1, totalWeight]
-                cumulativeWeight += settings.transforms[func].weight;
+            for(int func = 0; func < transforms.size(); func++) { // [0, slice0), (slice0, slice1)..., (sliceN-1, totalWeight]
+                cumulativeWeight += transforms[func].weight;
                 if(i < cumulativeWeight) {
                     return func;
                 }
             }
             
             //throw("unreachable state in theory");
-            return (int)settings.transforms.size() - 1; 
+            return (int)transforms.size() - 1; 
         };
 
         Coordinate calculate(int funcIndex) {
-            Transform& t = settings.transforms[funcIndex];
+            Transform& t = transforms[funcIndex];
 
             // apply affine transform first
             Coordinate affine = {
-                t.a * current.x + t.b * current.y + t.c,
-                t.d * current.x + t.e * current.y + t.f 
+                t.coeffs.a * current.x + t.coeffs.b * current.y + t.coeffs.c,
+                t.coeffs.d * current.x + t.coeffs.e * current.y + t.coeffs.f 
             }; // (x, y) = (a*x+b*y+c), (d*x+e*y+f))
             // with identity matrix this maps to
             // (x, y) = (x, y)
@@ -158,15 +134,16 @@ class Serial_Engine : public Engine {
         }
 
         void workerLoop() {
+            Coordinate workerCoord;
             while(running) {
-                step();
+                this->step(workerCoord);
             }
         }
 };
 
 
-Engine* createSerialEngine(fractalSettings& config) {
-    return new Serial_Engine(config);
+std::unique_ptr<Engine> createSerialEngine() {
+    return std::make_unique<Serial_Engine>();
 }
 
 

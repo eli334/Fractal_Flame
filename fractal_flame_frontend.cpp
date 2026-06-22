@@ -1,11 +1,7 @@
-#include <iostream>
-#include <iomanip>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <cstdint>
-
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -13,48 +9,102 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
-// Fractal Flame frontend
-// GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 #include "./engines/engine.h" // Inherit the abstract class 
 
-struct Color { // pixel colors
-    uint8_t r = 0, g = 0, b = 0;
-};
+// Fractal Flame frontend
+// GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 
-struct ColorStop { // each "node"? of a gradient
-    double position; // [0, 1]
-    Color color;
-};
+struct ColorState {
+    int numColors = 2048; // const
+    std::unique_ptr<Color[]> palette;
+    std::vector<Color> funcColors;
 
-struct colorConfig {
-    const uint16_t numColors = 2048;
-    Color* palette = new Color[numColors];
-    std::vector<ColorStop> colorStops = {{0, {0, 0, 0}}, 
-                                         {1, {255, 255, 255}}};
-};
+    ColorState() {
+        palette = std::make_unique<Color[]>(numColors);
+    }
 
+    void add(Color color) { // appends for now
+        funcColors.push_back(color);
+        buildPalette();
+    }
 
-struct UIConfig {
-    uint64_t* global_histogram = nullptr;
-    bool debugInfo = true;
-    int selectedBackend = 0; // defaults to None when opening window for now
+    void removeFunc(int index) {
+        funcColors.erase(funcColors.begin() + index);
+        buildPalette();
+    }
+
+    void clearPalette() {
+        for(int i = 0; i < numColors; i++) {
+            palette[i] = Color(); // set entire array to black
+        }
+    }
+
+    void buildPalette() {
+        clearPalette();
+        buildPalette(numColors);
+    }
+
+    void buildPalette(int numColors) {
+        palette = std::make_unique<Color[]>(numColors);
+        printf("There are %ld functions.\r\n", funcColors.size());
+        std::vector<Color> lerpColors;
+        
+        if(funcColors.size() == 0) {
+            lerpColors.push_back(Color());
+            lerpColors.push_back(Color(255, 255, 255));
+        } else if(funcColors.size() == 1) {
+            lerpColors.push_back(Color());
+            lerpColors.push_back(funcColors[0]);
+        } else { // size 2 or greater
+            lerpColors = funcColors;
+        }
+
+        for(int i = 0; i < numColors; i++) {
+            double t = (double)i / (numColors - 1); // t is the lerp amount
+            double segmentSize = 1.0 / (lerpColors.size() - 1); // size - 1 -> # of splits, all same size
+            int segment = (int)(t / segmentSize);
+            if(segment > lerpColors.size() - 2) {
+                segment = lerpColors.size() - 2;
+            }
+
+            double localT = (t - segment * segmentSize) / segmentSize; // now lerp within the segment
+            Color& a = lerpColors[segment]; // color to lerp from
+            Color& b = lerpColors[segment + 1]; // color to lerp to
+
+            palette[i].r = static_cast<uint8_t>(a.r + localT * (b.r - a.r));
+            palette[i].g = static_cast<uint8_t>(a.g + localT * (b.g - a.g));
+            palette[i].b = static_cast<uint8_t>(a.b + localT * (b.b - a.b));
+        }
+
+        printf("Palette made!\r\n");
+    }
+
+    const Color* getPalettePtr() {
+        return palette.get();
+    }
+
+    ~ColorState() {
+        clearPalette();
+    }
     
+};
+
+
+struct UIState {
+    int selectedBackend = 0; // defaults to None when opening window for now
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f; // 20% of screen width
+    uint16_t window_width = 1280, window_height = 720;
+    ColorState color;
 
-    colorConfig color; // 2048 colors
-
-    uint16_t window_width = 1920, window_height = 1080;
     int threadCount = 1;
     std::vector<const char*> supportedVariations;
 };  
 
-UIConfig UIConf; // global for ease of access
-
-std::unique_ptr<Engine> selectBackend(int selection, int threadCount, fractalSettings& config) {
+std::unique_ptr<Engine> selectBackend(int selection, int threadCount) {
     switch(selection) {
         case 1: // Serial
-            return std::unique_ptr<Engine>(createSerialEngine(config));
+            return std::unique_ptr<Engine>(createSerialEngine());
             break;
         case 2: // OpenMP
             //return std::unique_ptr<Engine>(createOpenMPEngine(config, threadCount));
@@ -66,108 +116,41 @@ std::unique_ptr<Engine> selectBackend(int selection, int threadCount, fractalSet
 
     }
 }
-
-
-
-fractalSettings fractalConf;
 GLuint flameTexture = 0; // global Texture id
 
-std::vector<ColorStop> paletteStops;
-
-//void buildPalette(Color* palette, int size, std::vector<ColorStop>& stops) {
-void buildPalette() {
-    // palette = UIConf.color.palette;    
-    Color* palette = UIConf.color.palette; 
-    int size = UIConf.color.numColors;
-    std::vector<ColorStop> stops = UIConf.color.colorStops;
-    // for each stop in paletteStops -- the # of functions:
-    for(int i = 0; i < size; i++) {
-        double t = (double)i / (size-1); // t is a number between 0 and 1, inclusive
-        
-        ColorStop* prev = &stops[0];
-        ColorStop* next = &stops[stops.size()-1];
-        // find where t is
-        for(int stop = 0; stop < stops.size() - 1; stop++) {
-            if(t >= stops[stop].position && t <= stops[stop+1].position) { // for each adjacent pair of stops, check if t is between them 
-                prev = &stops[stop];
-                next = &stops[stop + 1]; // t is between prev and next
-            }
-        }
-
-        // determine colors with lerp between stops
-        double width = next->position - prev->position; // width of the color gradient to fill
-        double blendProportion = (t - prev->position) / width; // (t - prev->position) -- a number with how strongly to blend the color at prev and the color at next (.5 is equal) 
-
-        palette[i].r = (uint8_t)(prev->color.r + blendProportion * (next->color.r - prev->color.r));
-        palette[i].g = (uint8_t)(prev->color.g + blendProportion * (next->color.g - prev->color.g));
-        palette[i].b = (uint8_t)(prev->color.b + blendProportion * (next->color.b - prev->color.b));
-    }
-    
-}
-
-
-
-void uploadHistogram();
+void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palette, int paletteSize);
 
 struct Preset {
     const char* displayName; // name for the preset
-    std::vector<Transform> transforms;
-    Viewport viewport;
-    
+    EngineState engineState;
+    std::vector<Color> funcColors;
 };
 
-
-const Preset presets[] = { // https://paulbourke.net/fractals/ifs/ - copied these directly, just so I have a few options for displaying
-    {                      // Note that these are not really what I want my final product to be -- 
-        "Dragon Curve",   
-        std::vector<Transform>{
-        Transform{4, 0, 0,                        // prob is 80% for 1, 20% for 2; 4/5 = .8, 1/5 = .2 
-                   0.824074, 0.281428, -1.88229,  // matrix; ((ax + by + e), (cx + dy + f))
-                  -0.212346, 0.864198, -0.110607 
-                  }, 
-        Transform{1, 0, 0,  
-                   0.088272, 0.520988, 0.785360,  
-                   -0.463889, -0.377778, 8.095795,  
-                  }
-        },
-        {-10, 10, -10, 10} // viewport
+const Preset DragonCurve = {
+    "Dragon Curve",
+    {
+    0, 
+    {-10, 10, -10, 10},
+    { 
+        Transform{4, 0, VariationDef(), Affine(0.824074, 0.281428, -1.88229, -0.212346, 0.864198, -0.110607)}, 
+        Transform{1, 1, VariationDef(), Affine(0.088272, 0.520988, 0.785360, -0.463889, -0.377778, 8.095795)}
+    }
     },
-    {                      
-        "Dragon Curve 2",   
-        std::vector<Transform>{
-        Transform{4, 0, 0,                        
-                   0.824074, 0.281428, -1.88229,  
-                  -0.212346, 0.864198, -0.110607 
-                  }, 
-        Transform{1, 0, 0,  
-                   0.088272, 0.520988, 0.785360,  
-                   -0.463889, -0.377778, 8.095795,  
-                  }
-        },
-        {-10, 10, -10, 10} // viewport
+    {
+        {255, 0, 0}, {255, 50, 0} // two colors, one for each Transform above
     }
 };
 
-void loadPreset(int choice, std::unique_ptr<Engine> &engine) {
-    Preset chosenPreset = presets[choice];
-    
-    engine->setTransforms(chosenPreset.transforms);
-    fractalConf.viewport = chosenPreset.viewport;
-}
-
-bool engineEditable(std::unique_ptr<Engine> &engine) { // free
-    if(engine) {
-        return !(engine->getStatus()); // true if paused, false if running or not initialized
-    }
-    return false;
-}
-
-void applySettings();
+const Preset presets[] = 
+{ // https://paulbourke.net/fractals/ifs/ - copied these directly, just so I have a few options for displaying 
+    DragonCurve
+};
 
 int main(int argc, char **argv ) { 
+    UIState ui;
     
+
     if (!glfwInit()) {
-        printf("OpenGL unable to initialize.  Exiting...");
         return -1;
     }
     // Set OpenGL 3.3 Core Profile
@@ -175,10 +158,9 @@ int main(int argc, char **argv ) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(UIConf.window_width, UIConf.window_height, "Fractal Flame Engine", NULL, NULL);
-    printf("Window created!\r\n");
+    GLFWwindow* window = glfwCreateWindow(ui.window_width, ui.window_height, "Fractal Flame Engine", NULL, NULL);
     
-    if (!window) { glfwTerminate(); return -1; }
+    if (!window) { glfwTerminate(); printf("glfwTerminate called. \r\n"); return -1; }
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     
@@ -190,7 +172,7 @@ int main(int argc, char **argv ) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexParameter.xhtml
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
-                fractalConf.global_histogram.width, fractalConf.global_histogram.height,
+                1000, 1000,
                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -204,11 +186,6 @@ int main(int argc, char **argv ) {
     
     std::unique_ptr<Engine> fractal_engine;
 
-
-
-
-    bool settingsOpen = false; // starts closed by default
-
     const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
         |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs
         |   ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
@@ -221,7 +198,9 @@ int main(int argc, char **argv ) {
     
     const ImGuiTabBarFlags tab_flags = ImGuiTabBarFlags_NoTabListScrollingButtons;
 
+    bool settingsOpen = false;
     static bool wasSettingsOpen = false;
+
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -240,14 +219,13 @@ int main(int argc, char **argv ) {
         ImGui::SetNextWindowSize(display);
         ImGui::SetNextWindowBgAlpha(0.0f);
         
-        uploadHistogram(); // update flameTexture
+        uploadHistogram(fractal_engine, ui.color.getPalettePtr(), ui.color.numColors); // update flameTexture
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
         ImGui::Begin("##flameview", nullptr, flame_flags);
         ImGui::Image((ImTextureID)(intptr_t)flameTexture, display);
         ImGui::End();
         ImGui::PopStyleVar();
-
 
         if(!settingsOpen) {
             
@@ -303,13 +281,13 @@ int main(int argc, char **argv ) {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1); // fill available width
             if(ImGui::Combo("##backendSelector", &selectedBackend, backends, IM_ARRAYSIZE(backends))) {
-                fractal_engine = selectBackend(selectedBackend, UIConf.threadCount, fractalConf);
-                if(selectedBackend == 0) {
-                    UIConf.supportedVariations = {};
+                fractal_engine = selectBackend(selectedBackend, ui.threadCount);
+                if(selectedBackend == 0) { // None
+                    ui.supportedVariations = {};
                 } else {
-                    std::vector<variationDef> vars = fractal_engine->getSupportedVariations();
-                    for(variationDef variation : vars) {
-                        UIConf.supportedVariations.push_back(variation.name);
+                    std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
+                    for(VariationDef variation : vars) {
+                        ui.supportedVariations.push_back(variation.name);
                     }
                 }
             }
@@ -320,86 +298,94 @@ int main(int argc, char **argv ) {
 
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f); // move blue tab line down by 12 pixels
             if(ImGui::BeginTabBar("##settingsTabs", ImGuiTabBarFlags_None)) {
-                static std::vector<float> colors;
                 ImGui::PushFont(NULL, 20.0f); 
                 if(ImGui::BeginTabItem("Transforms")) {
-                    if(ImGui::Button("+ Add Transform")) {
-                        colors.push_back(1); // r
-                        colors.push_back(1); // g
-                        colors.push_back(1); // b
-                        Transform newTransform = {1.0, 0}; // New 
-                        fractalConf.transforms.push_back(newTransform);
-                        UIConf.color.colorStops.push_back({0, {255, 255, 255}});
-
-                        int numTransforms = fractalConf.transforms.size();
-
-                        fractalConf.totalWeight = 0;
-
-                        for(int i = 0; i < numTransforms; i++) {
-                            fractalConf.totalWeight += fractalConf.transforms[i].weight;
-                        }
-                        // update transform colors
-                        
-                        for(int i = 0; i < numTransforms; i++) {
-                            fractalConf.transforms[i].color = (double)i / (double)(numTransforms - 1);
-                        }
-                    }
-                    int numTransforms = fractalConf.transforms.size();
                     
-                    for(int i = 0; i < numTransforms; i++) {
-                        ImGui::PushID(i); // important -- gives each slider a unique ID
-                        ImGui::Combo("##transformSelector", &fractalConf.transforms[i].variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
-                        ImGui::SameLine();
-                        
+                    if(!fractal_engine) {
+                        ImGui::BeginDisabled();
+                    }                     
+                    
+                    if(ImGui::Button("+ Add Transform")) {
+                        Transform newTransform = {1.0, 0}; // New 
+                        fractal_engine->addTransform(newTransform);
+                        ui.color.add(Color(0, 255, 0));
+                    }
 
-                        if(ImGui::ColorEdit3("##transformColor", &colors[3*i], ImGuiColorEditFlags_NoInputs)) {
+                    if(!fractal_engine) {
+                        ImGui::EndDisabled();
+                    } 
+
+                    std::vector<Transform> dupe;
+                    
+                    int numTransforms = 0;
+                    if(fractal_engine) {
+                        numTransforms = fractal_engine->getTransforms().size();
+                        dupe = fractal_engine->getTransforms();
+                    }
+                    for(int i = 0; i < numTransforms; i++) { // 0 if engine is not initialized -- engine is safe to call in loop also
+                        ImGui::PushID(i);
+                        int variationIndex = dupe[i].variation.index;
+
+                        if(ImGui::Combo("##transformSelector", &variationIndex, ui.supportedVariations.data(), ui.supportedVariations.size())) {
+                            dupe[i].variation.index = variationIndex; // change the duped index
+                            fractal_engine->setTransform(i, dupe[i]);
+                        }
+                        ImGui::SameLine();
+
+                        
+                        static std::vector<float> transformColors;
+                        transformColors.resize(numTransforms * 3, 1);
+                        if(ImGui::ColorEdit3("##transformColor", &transformColors[i*3], ImGuiColorEditFlags_NoInputs)) {
                             printf("Color changed! ");
-                            uint8_t red   = (uint8_t) (colors.at(3*i+0) * 255.0); // map r to color
-                            uint8_t green = (uint8_t) (colors.at(3*i+1) * 255.0);
-                            uint8_t blue  = (uint8_t) (colors.at(3*i+2) * 255.0);
-                            printf("New color; transform %d is %u, %u, %u\r\n", i, red, green, blue);
-                            UIConf.color.colorStops[i].color.r = red;
-                            UIConf.color.colorStops[i].color.g = green;
-                            UIConf.color.colorStops[i].color.b = blue;
-                            // position math: 
-                            if(numTransforms == 1) {
-                                UIConf.color.colorStops[1] = {1, {0, 0, 0}}; // set right one to black @ rightmost position 
-                            }
-                            UIConf.color.colorStops[i].position = (double) i / (numTransforms - 1);
+                            ui.color.funcColors[i] = Color(&transformColors[i*3]);
+                            printf("New color; transform %d is %u, %u, %u\r\n", i, ui.color.funcColors[i][0], ui.color.funcColors[i][1], ui.color.funcColors[i][2]);
                         }
 
                         ImGui::Text("Weight:");
                         ImGui::SameLine();
-                        ImGui::DragFloat("##weight", &fractalConf.transforms[i].weight, 0.1f, 0.0f, 10.0f, "%.1f");
+                        if(ImGui::DragFloat("##weight", &dupe[i].weight, 0.1f, 0.0f, 10.0f, "%.1f")) {
+                            printf("Weight of formula %d changed to %.1f.\r\n", i, dupe[i].weight);
+                            fractal_engine->setTransform(i, dupe[i]);
+                        }
                         ImGui::SameLine();
                         if(ImGui::Button("X")) {
-                            fractalConf.transforms.erase(fractalConf.transforms.begin() + i); 
-                            i--;
+                            dupe.erase(dupe.begin() + i);
                         }
 
+                        static std::vector<double> affineCoeffs;
+                        affineCoeffs.resize(dupe.size() * 6);
                         if(ImGui::CollapsingHeader("Affine")) {
-                            ImGui::InputDouble("a", &fractalConf.transforms[i].a, 0.01, 0.1, "%.3f");
-                            ImGui::InputDouble("b", &fractalConf.transforms[i].b, 0.01, 0.1, "%.3f");
-                            ImGui::InputDouble("c", &fractalConf.transforms[i].c, 0.01, 0.1, "%.3f");
-                            ImGui::InputDouble("d", &fractalConf.transforms[i].d, 0.01, 0.1, "%.3f");
-                            ImGui::InputDouble("e", &fractalConf.transforms[i].e, 0.01, 0.1, "%.3f");
-                            ImGui::InputDouble("f", &fractalConf.transforms[i].f, 0.01, 0.1, "%.3f");
+                            bool affineChanged = false;
+                            affineChanged |= ImGui::InputDouble("a", &affineCoeffs[i*6+0], 0.01, 0.1, "%.3f");
+                            affineChanged |= ImGui::InputDouble("b", &affineCoeffs[i*6+1], 0.01, 0.1, "%.3f");
+                            affineChanged |= ImGui::InputDouble("c", &affineCoeffs[i*6+2], 0.01, 0.1, "%.3f");
+                            affineChanged |= ImGui::InputDouble("d", &affineCoeffs[i*6+3], 0.01, 0.1, "%.3f");
+                            affineChanged |= ImGui::InputDouble("e", &affineCoeffs[i*6+4], 0.01, 0.1, "%.3f");
+                            affineChanged |= ImGui::InputDouble("f", &affineCoeffs[i*6+5], 0.01, 0.1, "%.3f");
 
+                            if(affineChanged) {
+                                dupe[i].coeffs.a = affineCoeffs[i*6+0];
+                                dupe[i].coeffs.b = affineCoeffs[i*6+1];
+                                dupe[i].coeffs.c = affineCoeffs[i*6+2];
+                                dupe[i].coeffs.d = affineCoeffs[i*6+3];
+                                dupe[i].coeffs.e = affineCoeffs[i*6+4];
+                                dupe[i].coeffs.f = affineCoeffs[i*6+5];
+                                fractal_engine->setTransform(i, dupe[i]);
+                            }
                         }
 
                         ImGui::PopID();
                     }
                     ImGui::Separator();
-                    ImGui::Checkbox("Final transform", &fractalConf.hasFinalTransform);
-                    if(&fractalConf.hasFinalTransform) {;
-                        ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
-                        ImGui::Text("Weight:");
-                        ImGui::SameLine();
-                        ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
-                        ImGui::SameLine();
-                    }
-
-
+                    // static bool hasFinalTransform = false;
+                    // ImGui::Checkbox("Final transform", &hasFinalTransform);
+                    // if(hasFinalTransform) {;
+                    //     ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
+                    //     ImGui::Text("Weight:");
+                    //     ImGui::SameLine();
+                    //     ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
+                    //     ImGui::SameLine();
+                    // }
                     ImGui::EndTabItem();
                 }
 
@@ -409,25 +395,18 @@ int main(int argc, char **argv ) {
                     
                     ImGui::Text("Seed");
                     ImGui::SameLine();
-                    ImGui::InputInt("##seed", &fractalConf.seed, 1, 100);
+                    static int seed = 0;
+                    ImGui::InputInt("##seed", &seed, 1, 10000);
 
-                    static float viewport[4] = {
-                        (float)fractalConf.viewport.minX,
-                        (float)fractalConf.viewport.maxX,
-                        (float)fractalConf.viewport.minY,
-                        (float)fractalConf.viewport.maxY
-                    };
-
+                    static float viewport[4] = {-1.0, 1.0, -1.0, 1.0};
+                    
                     if(!fractal_engine || (fractal_engine && !fractal_engine->getStatus())) {
                         ImGui::BeginDisabled();
                     }
 
                     ImGui::Text("minX, maxX, minY, maxY");
                     if(ImGui::DragFloat4("##viewport", viewport)) {
-                        fractalConf.viewport.minX = viewport[0];
-                        fractalConf.viewport.maxX = viewport[1];
-                        fractalConf.viewport.minY = viewport[2];
-                        fractalConf.viewport.maxY = viewport[3];
+                        fractal_engine->setViewport(Viewport(viewport));
                     };
 
                     ImGui::SameLine();
@@ -438,74 +417,67 @@ int main(int argc, char **argv ) {
                     }
 
                     if(fractal_engine && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {        // i love ImGui
-                       ImGui::SetTooltip("Engine must be paused to change the viewport!"); // they added ImGuiHoveredFlags_AllowWhenDisabled for this exact use case:
-                    } else if(!fractal_engine && ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("");
-                    }                                                                      // showing why something is disabled
+                       ImGui::SetTooltip("Engine must be paused to change the viewport!");  // they added ImGuiHoveredFlags_AllowWhenDisabled for this exact use case:
+                    }                                                                       // showing why something is disabled
 
                     if(!fractal_engine || (fractal_engine && !fractal_engine->getStatus())) {
                         ImGui::EndDisabled();
                     }
 
                     ImGui::Separator();
-                    ImGui::Text("Note: RAM use is W*H*(64+32)");
+                    ImGui::Text("Note: RAM use is W*H*(64+32)/8 bytes");
                     
-                    static int histWidth = (int)fractalConf.global_histogram.width, histHeight = (int)fractalConf.global_histogram.height;
-                    bool histDimChanged = false;
-
                     
-                    ImGui::Text("Current RAM use: %.2f GB", (double)histWidth*histHeight*(64 + 32)/1E9);
-                    ImGui::Text("Histogram Width");
-                    ImGui::SameLine();
-                    histDimChanged |= ImGui::InputInt("##histWidth", &histWidth, 1, 100);
-                    ImGui::Text("Histogram Height");
-                    ImGui::SameLine();
-                    histDimChanged |= ImGui::InputInt("##histHeight", &histHeight, 1, 100);
-
-                    if(histDimChanged && (histWidth > 0 && histHeight > 0)) { // width and height are > 0; if == 0, then no malloc (new) happens
-                        fractalConf.global_histogram.resize(histWidth, histHeight);
-
+                    if(fractal_engine) {
+                        bool histDimChanged = false;
+                        const Histogram<PixelData>* readOnlyHistogram = fractal_engine->getHistogram(); 
+                        int histWidth = fractal_engine->getHistogram()->getWidth();
+                        int histHeight = fractal_engine->getHistogram()->getHeight();
+                        ImGui::Text("Current RAM use: %.2f GB", (histWidth*histHeight*(64 + 32))/ (double)8E9);
+                        ImGui::Text("Histogram Width");
+                        ImGui::SameLine();
+                        histDimChanged |= ImGui::InputInt("##histWidth", &histWidth, 1, 100);
+                        ImGui::Text("Histogram Height");
+                        ImGui::SameLine();
+                        histDimChanged |= ImGui::InputInt("##histHeight", &histHeight, 1, 100);
+                     
+                        if(histDimChanged && (histWidth > 0 && histHeight > 0)) { // width and height are > 0; if == 0, then no malloc (new) happens
+                            fractal_engine->resize(histWidth, histHeight);
+                        }
                         glBindTexture(GL_TEXTURE_2D, flameTexture);
                         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, histWidth, histHeight, // resize texture to new histogram size
                                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                         glBindTexture(GL_TEXTURE_2D, 0);
                     }
-
-                    
                     ImGui::EndTabItem();
                 }
+            if(fractal_engine && !(fractal_engine->getStatus()) && ImGui::BeginTabItem("Presets")) {
+                int numPresets = sizeof(presets) / sizeof(presets[0]);
 
-                if(fractal_engine && !(fractal_engine->getStatus()) && ImGui::BeginTabItem("Presets")) {
-                    int numPresets = sizeof(presets) / sizeof(presets[0]);
-
-                    std::vector<const char*> presetVector = {" "}; // empty
-                    for(int i = 0; i < numPresets; i++) {
-                        presetVector.push_back(presets[i].displayName);
-                    }
-
-                    static int chosenPreset = 0;
-                    if(ImGui::Combo("##presetSelector", &chosenPreset, presetVector.data(), numPresets + 1)) { // +1 for " "
-                        loadPreset(chosenPreset, fractal_engine);    
-                    }
-                    ImGui::EndTabItem();
+                std::vector<const char*> presetVector = {" "}; // empty
+                for(int i = 0; i < numPresets; i++) {
+                    presetVector.push_back(presets[i].displayName);
                 }
 
-                ImGui::PopFont();
-                
-                
-                ImGui::EndTabBar();
+                static int chosenPreset = 0;
+                if(ImGui::Combo("##presetSelector", &chosenPreset, presetVector.data(), numPresets + 1)) { // +1 for " "
+                    //loadPreset(chosenPreset, fractal_engine);    
+                }
+                ImGui::EndTabItem();
             }
 
-            ImGui::PopStyleVar(2);
+            ImGui::PopFont();    
+            ImGui::EndTabBar();
+            }
 
-        
-            ImGui::End();
+        ImGui::PopStyleVar(2);      
+        ImGui::End();
         }
         
-        if(wasSettingsOpen && !settingsOpen) {
-            if(fractal_engine) {
-                fractal_engine->setTransforms(fractalConf.transforms);
-            }
+        if(wasSettingsOpen && !settingsOpen) { // if it was open and is no longer
+            // if(fractal_engine) {
+            //     fractal_engine->setTransforms(fractalConf.transforms);
+            // } // shouldn't be needed anymore
         }            
         wasSettingsOpen = settingsOpen;
 
@@ -526,65 +498,19 @@ int main(int argc, char **argv ) {
     return 0;
 }
 
-
-
-uint64_t* reallocateHistogram() {
-    std::unique_ptr<Histogram<uint64_t>> a(new Histogram<uint64_t>()); 
-
-    return a->data;
-}
-
-void uploadHistogram() { // function to push the global_histogram to opengl
-    uint64_t* hist = fractalConf.global_histogram.data;
-    int width = fractalConf.global_histogram.width, height = fractalConf.global_histogram.height;
-
-    static uint64_t lastMaxVal = 0;
-    uint64_t maxVal = 0;
-    for(int i = 0; i < width*height; i++) {
-        if(hist[i] > maxVal) { // dereference with [i]
-            maxVal = hist[i];
-        }
+void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palette, int paletteSize) { // function to push the global_histogram to opengl
+    if(!fractal_engine) return;
+    static std::vector<uint8_t> pixels;
+    int width = fractal_engine->getHistogram()->getWidth();
+    int height = fractal_engine->getHistogram()->getHeight();
+    pixels.resize(width * height * 4);
+    if(fractal_engine->fillPixelBuffer(pixels.data(), palette, paletteSize)) { // if the pixel buffer was updated, reupload
+        glBindTexture(GL_TEXTURE_2D, flameTexture);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+                        GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+        printf("Histogram uploaded!\r\n");
     }
-    if(maxVal == 0) return; // don't render when nothing has generated yet
-    if(lastMaxVal == maxVal) return; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
-
-    printf("Starting upload...\r\n");
-    static std::vector<uint8_t> pixels(width * height * 4); // OpenGL wants pixels as RGBA -- initialize as all 0s
-    pixels.resize(width * height * 4); // if canvas size changes, resize pixels array
-
-    double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double, with 1.0 because log(0) is undefined
-    
-    for(int i = 0; i < width*height; i++) {
-        // 8 bits per pixel
-        // logarithmically map brightness
-        if(hist[i] == 0) {
-            pixels[i*4+0] = 0;  
-            pixels[i*4+1] = 0;  
-            pixels[i*4+2] = 0;  
-            pixels[i*4+3] = 255; // alpha of 255 is fully opaque
-            continue;
-        }
-
-
-        double brightness = std::log(1.0 + (double)hist[i]) / logMax; // log of hist[i] for every index of the entire histogram
-        // one million log() operations per frame (oof!)
-        // dividing by the max value makes the max 1 and the rest a number between 0 and 1
-        brightness = std::pow(brightness, 1.0/2.2); // gamma correction -- definitely a faster way to do this using fancy CPU features (does the compiler do that automatically?)
-        //pixels[i*4+0] = (uint8_t)(UIConf.);  
-        double colorCoord = (double)fractalConf.global_histogram.colorData[i] / (double)hist[i]; // colorCoord <= hist[i], so colorCoord <= 1
-        int paletteIndex = (int)(colorCoord * (UIConf.color.numColors - 1));
-
-        pixels[i*4+0] = (uint8_t)(UIConf.color.palette[paletteIndex].r);  
-        pixels[i*4+1] = (uint8_t)(UIConf.color.palette[paletteIndex].g);  
-        pixels[i*4+2] = (uint8_t)(UIConf.color.palette[paletteIndex].b);  
-        pixels[i*4+3] = 255; // alpha of 255 is fully opaque
-    }
-    //printf("uploading, maxVal=%lu\n", maxVal);
-    glBindTexture(GL_TEXTURE_2D, flameTexture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
-                    GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-    glBindTexture(GL_TEXTURE_2D, 0);
-    printf("Histogram uploaded!\r\n");
 }
 
 void applySettings() {
