@@ -26,21 +26,26 @@ Coordinate variation_spherical(Coordinate c) {
 class Serial_Engine : public Engine {
     public:
         Serial_Engine() : Engine() {
-            setup();
+            setup(1);
         };
 
         Coordinate getStartingCoordinate() {
             return {dist(rng), dist(rng), unitDist(rng)};
         }
 
-        void setup(int seed = 0) {
-            current = getStartingCoordinate();
-            
+        void setup(int numThreads, int seed = 0) {
+            threadCoords.resize(numThreads);
+            for(int i = 0; i < numThreads; i++) {
+                threadCoords[i] = getStartingCoordinate();
+            }
+            setSeed(seed);
         }
 
         void start() {
             running = true;
-            
+            printf("Spawning worker...\r\n");
+            workingThread = std::thread(&Serial_Engine::workerLoop, this);
+            printf("Thread spawned -- running = %d\r\n", running);
         }
 
         void stop() {
@@ -52,25 +57,59 @@ class Serial_Engine : public Engine {
         
         Coordinate stepNoPlot(Coordinate c) {
             int func = pickFunction();
-            if(func <= 0) { // there are no transforms selected but the user pressed > -- do nothing
+
+            constexpr bool ultra_debug = true;
+            if constexpr (ultra_debug) { // if true, constexpr makes this if() compile.  if false, it doesn't get added to the code
+                static std::vector<int> funcHits(transforms.size());
+                static std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+                funcHits.resize(transforms.size()); // resize to the number of transforms -- not necessarily unchanging in multithreading, so resize
+
+                if (func >= 0 && func < (int)funcHits.size()) {
+                    funcHits[func]++;
+                }
+
+                static int totalFuncHits = 0;
+                totalFuncHits++;
+
+                if(totalFuncHits % 200000 == 0) {
+                    // every 200k hits, print
+                    printf("totalFuncHits = %d\r\n", totalFuncHits);
+                    // for(size_t i = 0; i < transforms.size(); i++) {
+                    //     printf("Function %lu: %d\r\n", i, funcHits[i]);
+                    // }
+                    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+                    std::chrono::duration<double> timeSinceStart = now - startTime; 
+                    
+                    double iterationsPerSec = (double) totalFuncHits / timeSinceStart.count();
+                    printf("Iterations per second: %f\r\n", iterationsPerSec);
+                }
+            }
+
+            if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
                 return c;
             }
+
             c.color = (c.color + transforms[func].color) / 2.0;
-            current = calculate(func);
-            return current;
+            c = calculate(func, c);
+
+            if(hasFinalTransform) {
+                // calculateFinalTransform()
+            }
+
+            return c;
         }
 
-        void step(Coordinate c) {
-            current = stepNoPlot(c);
-            if(hasFinalTransform) {
-
-            }
-            plot(c); // plots the current point if within histogram
+        void step(Coordinate c, int threadIndex) {
+            threadCoords[threadIndex] = stepNoPlot(c);
+            plot(threadCoords[threadIndex]); // plots the current point if within histogram
         };
 
         void plot(Coordinate pointToPlot) {
             int plotX = (int)((pointToPlot.x - viewport.minX) / (viewport.maxX - viewport.minX) * globalHistogram.width);
             int plotY = (int)((pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY) * globalHistogram.height);
+
+            // Optimization note: / (viewport.maxX - viewport.minX) * globalHistogram.width); -- all of these do not change.
+            // The only variable that changes is pointToPlot x, y -- I could precompute 
             
             if(plotX >= 0 && plotX < globalHistogram.width && // if within bounds of histogram:
                plotY >= 0 && plotY < globalHistogram.height) {
@@ -91,7 +130,6 @@ class Serial_Engine : public Engine {
         }
 
     private:
-        bool running = false;
         std::thread workingThread;
         std::mt19937_64 rng; // random number generator, set to 'seed' when run
         std::uniform_real_distribution<double> dist{-1.0, 1.0};   // for x, y starting point
@@ -100,7 +138,7 @@ class Serial_Engine : public Engine {
         int pickFunction() {
             double i = unitDist(rng) * getTotalWeight(); // a number from 0 to totalWeight
             float cumulativeWeight = 0;
-            for(int func = 0; func < transforms.size(); func++) { // [0, slice0), (slice0, slice1)..., (sliceN-1, totalWeight]
+            for(size_t func = 0; func < transforms.size(); func++) { // [0, slice0), (slice0, slice1)..., (sliceN-1, totalWeight]
                 cumulativeWeight += transforms[func].weight;
                 if(i < cumulativeWeight) {
                     return func;
@@ -111,33 +149,50 @@ class Serial_Engine : public Engine {
             return (int)transforms.size() - 1; 
         };
 
-        Coordinate calculate(int funcIndex) {
+        Coordinate calculate(int funcIndex, Coordinate coord) {
             Transform& t = transforms[funcIndex];
 
             // apply affine transform first
             Coordinate affine = {
-                t.coeffs.a * current.x + t.coeffs.b * current.y + t.coeffs.c,
-                t.coeffs.d * current.x + t.coeffs.e * current.y + t.coeffs.f 
+                t.coeffs.a * coord.x + t.coeffs.b * coord.y + t.coeffs.c,
+                t.coeffs.d * coord.x + t.coeffs.e * coord.y + t.coeffs.f 
             }; // (x, y) = (a*x+b*y+c), (d*x+e*y+f))
             // with identity matrix this maps to
             // (x, y) = (x, y)
+
             switch(funcIndex) {
                 case 0: // Identity
-                    return variation_identity(affine);
+                    affine = variation_identity(affine);
+                    break;
                 case 1: // Sinusoidal
-                    return variation_sinusoidal(affine);
+                    affine = variation_sinusoidal(affine);
+                    break;
+
                 case 2: // Spherical
-                    return variation_spherical(affine);
+                    affine = variation_spherical(affine);
+                    break;
+
                 default:
-                    return affine;
+                    affine = affine;
             }
+
+            affine.color = (coord.color + t.color) / 2.0;
+
+            return affine;
         }
 
         void workerLoop() {
-            Coordinate workerCoord;
-            while(running) {
-                this->step(workerCoord);
+            printf("Worker loop started.\r\n");
+            Coordinate* currentThreadCoordinate = &threadCoords[0];
+
+            for(int i = 0; i < 20; i++) {
+                *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate);
             }
+
+            while(running) {
+                this->step(*currentThreadCoordinate, 0);
+            }
+            printf("Worker loop ended.\r\n");
         }
 };
 

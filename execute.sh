@@ -2,6 +2,7 @@
 
 #nvcc --compiler-options -fopenmp ./fractal_flame.cu -o ./fractal_flame (for reference)
 
+clear
 set -e
 
 BUILD_TYPE=${1:-Debug}  # default to Debug, override with first argument

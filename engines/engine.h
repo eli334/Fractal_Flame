@@ -29,7 +29,7 @@ struct Affine {
         this->d = d; this->e = e; this->f = f;
     }
 
-    std::string formattedOutput;
+    std::string formattedOutput = "";
     const char* toString() {
         std::stringstream stream;
         stream << std::fixed << std::setprecision(2);
@@ -38,6 +38,11 @@ struct Affine {
         formattedOutput = stream.str();
         return formattedOutput.c_str();
     }
+
+    std::vector<double> toVector() const {
+        return {a, b, c, d, e, f};
+    }
+
 };
 
 struct VariationDef {
@@ -48,7 +53,7 @@ struct VariationDef {
     const char* name = "Identity";
     const char* formula = "(x, y)";
 
-    std::string formattedOutput;
+    std::string formattedOutput = "";
     const char* toString() {
         std::stringstream stream;
         stream << "Varation: " << name << " (" << index << ")\r\n";
@@ -64,7 +69,7 @@ struct Transform {
     VariationDef variation;
     Affine coeffs; // affine coefficients - identity matrix by default
 
-    std::string formattedOutput;
+    std::string formattedOutput = "";
     const char* toString(int index) {
         std::stringstream stream;
         stream << std::fixed << std::setprecision(3);
@@ -86,10 +91,10 @@ template<typename T>
 class Histogram {
     public:
         int width = 1000, height = 1000;
-        T* data = nullptr;
+        std::vector<T> data;
 
         Histogram(int desiredWidth = 1000, int desiredHeight = 1000) : width(desiredWidth), height(desiredHeight) {
-            data = new T[width * height]();
+            data.resize(desiredWidth*desiredHeight);
         }
 
         int getWidth() const {
@@ -101,16 +106,13 @@ class Histogram {
         }
 
         void clear() {
-            delete [] data;
+            std::fill(data.begin(), data.end(), T{}); // std::fill -- memset but actually works how I want with constructors
         }
 
         void resize(int newWidth, int newHeight) {
-            delete [] data;
-
             width = newWidth;
             height = newHeight;
-
-            data = new T[width * height]();
+            data.resize(newWidth * newHeight);
         }
 
         const T get(int x, int y) {
@@ -125,10 +127,6 @@ class Histogram {
             } else {
                 assert(false); // should be impossible to get here
             }
-        }
-
-        ~Histogram() {
-            delete [] data;
         }
 
         Histogram(const Histogram&) = delete; // don't want or need copy constructor
@@ -150,7 +148,8 @@ struct Color { // pixel colors
             case 0: return r;
             case 1: return g;
             case 2: return b;
-            default: return a; // just in case -- should only ever be 0, 1, or 2
+            default:
+            case 3: return a; // just in case -- should only ever be 0, 1, or 2
         }
     }
 };
@@ -179,12 +178,16 @@ struct PixelData{
     double color = 0;
 };
 
+class Engine;
+
 struct EngineState {
     int seed = 0;
     Viewport viewport;
     std::vector<Transform> transforms;
     bool hasFinalTransform = false;
     Transform finalTransform;
+
+    void applyPreset(std::unique_ptr<Engine>& fractal_engine);
 }; 
 
 
@@ -196,8 +199,9 @@ class Engine {
         bool hasFinalTransform = false;
         Transform finalTransform;
         Histogram<PixelData> globalHistogram;
-        
-        Coordinate current;
+    
+        std::vector<Coordinate> threadCoords;
+
         int seed = 0;
         std::chrono::_V2::steady_clock::time_point startTime = std::chrono::steady_clock::now();
     private:
@@ -208,7 +212,7 @@ class Engine {
                 return;
             }
             totalWeight = 0;
-            for(int i = 0; i < (int) transforms.size(); i++) {
+            for(size_t i = 0; i < transforms.size(); i++) {
                 totalWeight += transforms[i].weight;
             }
         }
@@ -218,7 +222,7 @@ class Engine {
                 return;
             }
             
-            for(int i = 0; i < transforms.size(); i++) {
+            for(size_t i = 0; i < transforms.size(); i++) {
                 this->transforms[i].color = (float)i / (this->transforms.size() - 1); 
             }
         }
@@ -227,14 +231,15 @@ class Engine {
             calculateWeight();
             recalculateColors();
         }
+        
     public:
-        virtual void step(Coordinate c) = 0; // iterate coordinate once   
+        virtual void step(Coordinate c, int threadIndex) = 0; // iterate coordinate once   
         virtual Coordinate stepNoPlot(Coordinate c) = 0;
         virtual ~Engine() = default; // reset
         
         virtual std::vector<VariationDef> getSupportedVariations() = 0;
         
-        virtual void setup(int seed = 0) = 0; // Spawn the thread, pause
+        virtual void setup(int numThreads, int seed = 0) = 0; // Spawn the thread, pause
         virtual Coordinate getStartingCoordinate() = 0;
         virtual void start() = 0; // infinitely call step()
         virtual void stop() = 0; // stop infinitely calling step()
@@ -267,16 +272,18 @@ class Engine {
 
 
 
-        void applyState(EngineState state) {
-            setTransforms(state.transforms);
+        void applyPreset(EngineState state) {
+            seed = state.seed;
             viewport = state.viewport;
             hasFinalTransform = state.hasFinalTransform;
-            finalTransform = state.finalTransform;    
+            finalTransform = state.finalTransform;
+            setTransforms(state.transforms);    
             // engine stays paused after applying state
         }
 
         void setSeed(int seed) {
             this->seed = seed;
+            configChanged();
         }
 
         void setFinalTransform(Transform final) {
@@ -300,8 +307,10 @@ class Engine {
             return running;
         }
         
-        Coordinate getCurrent() {
-            return current;
+        Coordinate getCurrent(int index) {
+            size_t correctIndexType = (size_t) index; // oh, C++
+            if(correctIndexType > threadCoords.size()) return Coordinate(); // if OOB, just return (0, 0) - i don't even use getCurrent
+            return threadCoords[correctIndexType];
         }
 
         const Histogram<PixelData>* getHistogram() { // const makes this read-only
@@ -334,8 +343,10 @@ class Engine {
             }
             if(maxVal == 0) return false; // don't render when nothing has generated yet
             if(lastMaxVal == maxVal) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
-
-            printf("Starting upload...\r\n");
+            
+            lastMaxVal = maxVal;
+            
+            // printf("Starting upload...\r\n");
             
             double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double, with 1.0 because log(0) is undefined
             
@@ -351,15 +362,21 @@ class Engine {
                 } // untouched pixels are black
                 PixelData currentPixel = globalHistogram.get(i);
                 double brightness = std::log(currentPixel.hits) / logMax; // log of hist[i] for every index of the entire histogram
+                // double brightness = (double)currentPixel.hits / (double)maxVal;
                 // one million log() operations per frame (oof!) [lookup table?]
+                //std::vector<double> logTable(maxVal + 1);
+                
+                // for(uint64_t i = 1; i <= maxVal; ++i) {
+                //     logTable[i] = std::log((double)i) / logMax;
+                // }
+
                 // dividing by the max value makes the max 1 and the rest a number between 0 and 1
                 brightness = std::pow(brightness, 1.0/2.2); // gamma correction
                 double colorCoord = currentPixel.color / static_cast<double>(currentPixel.hits); 
                 int paletteIndex = (int)(colorCoord * (paletteSize - 1));
-
-                pixels[i*4+0] = (uint8_t)(palette[i][0]); // red  
-                pixels[i*4+1] = (uint8_t)(palette[i][1]); // green
-                pixels[i*4+2] = (uint8_t)(palette[i][2]); // blue
+                pixels[i*4+0] = (uint8_t)(palette[paletteIndex][0]); // red  
+                pixels[i*4+1] = (uint8_t)(palette[paletteIndex][1]); // green
+                pixels[i*4+2] = (uint8_t)(palette[paletteIndex][2]); // blue
                 pixels[i*4+3] = 255; // alpha of 255 is fully opaque
             }
             // buffer done filling
@@ -370,6 +387,13 @@ class Engine {
 
         // }
         
+        void removeTransform(int index) {
+            printf("removeTransform called\r\n");
+            stop();
+            this->transforms.erase(transforms.begin() + index);
+            configChanged();
+        }
+
         void addTransform(Transform transform) {
             printf("addTransform called\r\n");
             stop();
@@ -416,13 +440,18 @@ class Engine {
                     } 
                     
                 }
-                this->viewport = Viewport(minX, maxX, minY, maxY);
+                setViewport(Viewport(minX, maxX, minY, maxY));
             });
             t.join(); // join thread
         }
     
     
 };
+
+inline void EngineState::applyPreset(std::unique_ptr<Engine>& fractal_engine) { // inline or else the compiler complains
+    fractal_engine->applyPreset(EngineState{seed, viewport, transforms, hasFinalTransform, finalTransform});
+}
+
 
 std::unique_ptr<Engine> createSerialEngine();
 std::unique_ptr<Engine> createOpenMPEngine(int threadCount);
