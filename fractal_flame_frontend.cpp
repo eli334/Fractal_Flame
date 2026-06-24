@@ -468,31 +468,26 @@ void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
 }
 
 void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
-    if(fractal_engine && fractal_engine->getStatus()) {
-        ImGui::BeginDisabled();
-    }
+    // if(fractal_engine && fractal_engine->getStatus()) {
+    //     ImGui::BeginDisabled();
+    // }
 
     if(ImGui::Button("[R]")) {
+        fractal_engine->stop();
         int colorSeed = fractal_engine->randomize();
         color.randomizeColors(fractal_engine->getTransforms().size(), colorSeed);
+        fractal_engine->start();
     }
 
-    if(fractal_engine && fractal_engine->getStatus()) {
-        ImGui::EndDisabled();
-    }
+    // if(fractal_engine && fractal_engine->getStatus()) {
+    //     ImGui::EndDisabled();
+    // }
 }
 
 bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture) {
     if(ImGui::BeginTabItem("UI")) {
         // histogram width, height
         // viewport width, height
-        
-        ImGui::Text("Seed");
-        ImGui::SameLine();
-        static int seed = 0;
-        if(ImGui::InputInt("##seed", &seed, 1, 10000)) {
-            printf("Seed changing not implemented yet\r\n");
-        }
 
         static float viewport[4] = {-1.0, 1.0, -1.0, 1.0};
         

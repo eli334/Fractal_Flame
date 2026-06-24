@@ -489,7 +489,7 @@ class Engine {
 		}
 
 		int randomize(int randomSeed) {
-			std::uniform_int_distribution<int> transformCountDist(2, 4);
+			std::uniform_int_distribution<int> transformCountDist(2, 8);
 
 			std::mt19937 rng(randomSeed);
             int numRandTransforms = transformCountDist(rng);
