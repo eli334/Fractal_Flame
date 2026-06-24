@@ -14,11 +14,14 @@
 // Fractal Flame frontend
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 
+struct Preset;
+
 struct ColorState {
     int numColors = 128; // const
     std::unique_ptr<Color[]> palette;
     std::vector<Color> funcColors;
     std::vector<float> floats; // used for ColorEdit3
+    
 
     ColorState() {
         palette = std::make_unique<Color[]>(numColors);
@@ -36,10 +39,34 @@ struct ColorState {
         floats.erase(floats.begin() + 3*index, floats.begin() + 3*index+3);
     }
 
+    void resizeVectors(int numTransforms) {
+        funcColors.resize(numTransforms);
+        floats.resize(numTransforms*3);
+    }
+
     void clearPalette() {
         for(int i = 0; i < numColors; i++) {
             palette[i] = Color(); // set entire array to black
         }
+    }
+
+    void forceUIColors() {
+        
+    }
+
+    void randomizeColors(int numTransforms, int seed) {
+        std::uniform_real_distribution<double> satDist(0.7f, 1.0f);
+		std::uniform_real_distribution<double> valDist(0.7f, 1.0f);
+		std::mt19937 rng(seed); // pseudorandom -- good enough
+		funcColors.resize(numTransforms);
+		for(int i = 0; i < numTransforms; i++) {
+			double hue = (double)i / numTransforms; // evenly spaced hues [0, 1]
+			double saturation = satDist(rng);
+			double value = valDist(rng);
+			funcColors[i] = Color::hsvToRGB(hue, saturation, value);
+            printf("funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
+		}
+		buildPalette();
     }
 
     void buildPalette() {
@@ -80,19 +107,12 @@ struct ColorState {
         }
 
         printf("Palette made!\r\n");
-        constexpr bool removeMeLater = true;
-        if constexpr (removeMeLater) {
-            for(int i = 0; i < 50; i++) {
-                printf("Color %d: %u, %u, %u\r\n", i, palette[i].r, palette[i].g, palette[i].b);
-            }
-        }
         
-
-        floats.resize(funcColors.size()*4);
+        floats.resize(funcColors.size()*3);
         for(size_t i = 0; i < funcColors.size(); i++) {
-            floats[4*i+0] = palette[i].r / (float) 255; 
-            floats[4*i+1] = palette[i].g / (float) 255;
-            floats[4*i+2] = palette[i].b / (float) 255;
+            floats[3*i+0] = funcColors[i].r / 255.0; 
+            floats[3*i+1] = funcColors[i].g / 255.0;
+            floats[3*i+2] = funcColors[i].b / 255.0;
         }
         printf("Floats changed!\r\n");
     }
@@ -109,19 +129,38 @@ struct ColorState {
 
 
 struct UIState {
-    int selectedBackend = 0; // defaults to None when opening window for now
+    int selectedBackend = 1; // defaults to Serial when opening window for now
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f; // 20% of screen width
     uint16_t window_width = 1280, window_height = 720;
     ColorState color;
 
     int threadCount = 1;
-    std::vector<const char*> supportedVariations;
+    std::vector<std::string> supportedVariations;
 
     void applyPreset(std::vector<Color> newColors) {
         color.funcColors = newColors;
         color.buildPalette();
     }
+
+    void resize(int newSize) {
+        color.resizeVectors(newSize);   
+    }
+
+    void renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen);
+
+    void renderPlayPaused(std::unique_ptr<Engine> &fractal_engine);
+
+    void renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine);
+
+    bool renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture);
+
+    bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui);
+
+    void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui, std::vector<Preset> &presets);
+    
+    void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
+    
 };  
 
 std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
@@ -137,7 +176,7 @@ std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
         default: // None
             return nullptr;
 
-    }
+    } 
 }
 GLuint flameTexture = 0; // global Texture id
 
@@ -176,8 +215,11 @@ std::vector<Preset> presets = {DragonCurve}; // https://paulbourke.net/fractals/
 int main() { 
     UIState ui;
     
+    constexpr bool OpenGLDebug = true;
+
 
     if (!glfwInit()) {
+        printf("glfwInit failed. Exiting...\r\n");
         return -1;
     }
     // Set OpenGL 3.3 Core Profile
@@ -191,6 +233,10 @@ int main() {
     glfwMakeContextCurrent(window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
     
+    if constexpr (OpenGLDebug) {
+        printf("Window created.\r\n");
+    }
+
 
     glGenTextures(1, &flameTexture);
     glBindTexture(GL_TEXTURE_2D, flameTexture);
@@ -203,6 +249,10 @@ int main() {
                 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    if constexpr (OpenGLDebug) {
+        printf("Texture bound.\r\n");
+    }
+
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
@@ -211,7 +261,7 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
     
-    std::unique_ptr<Engine> fractal_engine;
+    std::unique_ptr<Engine> fractal_engine = createSerialEngine();
 
     const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
         |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs
@@ -253,48 +303,30 @@ int main() {
         ImGui::PopStyleVar();
 
         if(!settingsOpen) {
+            ImGui::SetNextWindowPos({10, display.y - 80}, ImGuiCond_Always);
+            ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             
+            ImGui::Begin("##randomizeButton", nullptr, button_flags);
+            ui.renderRandomizeButton(fractal_engine);
+            ImGui::End();
+
+
             ImGui::SetNextWindowPos({10, display.y - 40}, ImGuiCond_Always); // settings positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
-            ImGui::Begin("##gearButton", nullptr, button_flags);
             
-            if(fractal_engine && fractal_engine->getStatus()) {
-                ImGui::BeginDisabled();
-            }
-
-            if(ImGui::Button("[S]")) { 
-                settingsOpen = !settingsOpen;
-            }
-
-            if(fractal_engine && fractal_engine->getStatus()) {
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine();
+            ImGui::Begin("##settingsButton", nullptr, button_flags);
+            ui.renderSettingsButton(fractal_engine, settingsOpen);
             ImGui::End();
-            
+
+
             ImGui::SetNextWindowPos({60, display.y - 40}, ImGuiCond_Always); // play/pause positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
+            
             ImGui::Begin("##playPause", nullptr, button_flags);
-            if(fractal_engine) {
-                if(fractal_engine->getStatus()) {
-                    if(ImGui::Button("[||]")) { // if it's running, show pause button
-                        fractal_engine->stop();
-                    }
-                } else { // if it's not running, show play button
-                    if(ImGui::Button("[>]")) { 
-                        printf("Attempting to start...");
-                        fractal_engine->start();
-                        if(!fractal_engine->getStatus()) {
-                            printf("Engine failed to start.\r\n");
-                        } else {
-                            printf("Engine started.\r\n");
-                        }
-                    }
-                }
-            }
+            ui.renderPlayPaused(fractal_engine);
             ImGui::End();
-        } else {
+
+        } else { // if settings is open:
             ImGui::SetNextWindowPos({10, 40}, ImGuiCond_Always); // settings positioning
             ImGui::SetNextWindowSize({500, display.y - 80}, ImGuiCond_Always);
             ImGui::Begin("Settings", &settingsOpen, settings_flags); // Contents of the Settings menu:
@@ -305,20 +337,22 @@ int main() {
             #endif 
             }; // this is hilarious and also accomplishes exactly what I want 
 
-            static int selectedBackend = 0;
+            static int selectedBackend = 1;
 
             ImGui::PushFont(NULL, 18.0f);
+            
             ImGui::Text("Backend:");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(-1); // fill available width
+            ImGui::SetNextItemWidth(100); // 100 px
             if(ImGui::Combo("##backendSelector", &selectedBackend, backends, IM_ARRAYSIZE(backends))) {
                 fractal_engine = selectBackend(selectedBackend, ui.threadCount);
                 if(selectedBackend == 0) { // None
                     ui.supportedVariations = {};
                 } else {
                     std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
-                    for(VariationDef variation : vars) {
-                        ui.supportedVariations.push_back(variation.name);
+                    ui.supportedVariations.resize(vars.size());
+                    for(size_t i = 0; i < vars.size(); i++) {
+                        ui.supportedVariations[i] = vars[i].name; 
                     }
                 }
             }
@@ -330,183 +364,17 @@ int main() {
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f); // move blue tab line down by 12 pixels
             if(ImGui::BeginTabBar("##settingsTabs", ImGuiTabBarFlags_None)) {
                 ImGui::PushFont(NULL, 20.0f); 
-                if(ImGui::BeginTabItem("Transforms")) {
-                    
-                    if(!fractal_engine) {
-                        ImGui::BeginDisabled();
-                    }                     
-                    
-                    if(ImGui::Button("+ Add Transform")) {
-                        Transform newTransform;
-                        fractal_engine->addTransform(newTransform);
-                        ui.color.add(Color(0, 255, 0));
-                    }
-
-                    if(!fractal_engine) {
-                        ImGui::EndDisabled();
-                    } 
-
-                    std::vector<Transform> dupe;
-                    
-                    int numTransforms = 0;
-                    if(fractal_engine) {
-                        numTransforms = fractal_engine->getTransforms().size();
-                        dupe = fractal_engine->getTransforms();
-                    }
-                    for(int i = 0; i < numTransforms; i++) { // 0 if engine is not initialized -- engine is safe to call in loop also
-                        ImGui::PushID(i);
-                        int variationIndex = dupe[i].variation.index;
-
-                        if(ImGui::Combo("##transformSelector", &variationIndex, ui.supportedVariations.data(), ui.supportedVariations.size())) {
-                            dupe[i].variation.index = variationIndex; // change the duped index
-                            fractal_engine->setTransform(i, dupe[i]);
-                        }
-                        ImGui::SameLine();
-
-                        
-                        
-                        ui.color.floats.resize(numTransforms * 3, 1);
-                        if(ImGui::ColorEdit3("##transformColor", &ui.color.floats[i*3], ImGuiColorEditFlags_NoInputs)) {
-                            printf("Color changed! ");
-                            ui.color.funcColors[i] = Color(&ui.color.floats[i*3]);
-                            ui.color.buildPalette();
-                        }
-
-                        ImGui::Text("Weight:");
-                        ImGui::SameLine();
-                        if(ImGui::DragFloat("##weight", &dupe[i].weight, 0.1f, 0.0f, 10.0f, "%.1f")) {
-                            printf("Weight of formula %d changed to %.1f.\r\n", i, dupe[i].weight);
-                            fractal_engine->setTransform(i, dupe[i]);
-                        }
-                        ImGui::SameLine();
-                        if(ImGui::Button("X")) {
-                            fractal_engine->removeTransform(i);
-                            ui.color.removeFunc(i);
-                        }
-
-                        std::vector<double> affineCoeffs = dupe[i].coeffs.toVector();
-                        if(ImGui::CollapsingHeader("Affine")) {
-                            bool affineChanged = false;
-                            affineChanged |= ImGui::InputDouble("a", &affineCoeffs[0], 0.01, 0.1, "%.3f");
-                            affineChanged |= ImGui::InputDouble("b", &affineCoeffs[1], 0.01, 0.1, "%.3f");
-                            affineChanged |= ImGui::InputDouble("c", &affineCoeffs[2], 0.01, 0.1, "%.3f");
-                            affineChanged |= ImGui::InputDouble("d", &affineCoeffs[3], 0.01, 0.1, "%.3f");
-                            affineChanged |= ImGui::InputDouble("e", &affineCoeffs[4], 0.01, 0.1, "%.3f");
-                            affineChanged |= ImGui::InputDouble("f", &affineCoeffs[5], 0.01, 0.1, "%.3f");
-
-                            if(affineChanged) {
-                                dupe[i].coeffs.a = affineCoeffs[0];
-                                dupe[i].coeffs.b = affineCoeffs[1];
-                                dupe[i].coeffs.c = affineCoeffs[2];
-                                dupe[i].coeffs.d = affineCoeffs[3];
-                                dupe[i].coeffs.e = affineCoeffs[4];
-                                dupe[i].coeffs.f = affineCoeffs[5];
-                                fractal_engine->setTransform(i, dupe[i]);
-                            }
-                        }
-
-                        ImGui::PopID();
-                    }
-                    ImGui::Separator();
-                    // static bool hasFinalTransform = false;
-                    // ImGui::Checkbox("Final transform", &hasFinalTransform);
-                    // if(hasFinalTransform) {;
-                    //     ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
-                    //     ImGui::Text("Weight:");
-                    //     ImGui::SameLine();
-                    //     ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
-                    //     ImGui::SameLine();
-                    // }
-                    ImGui::EndTabItem();
-                }
-
-                if(ImGui::BeginTabItem("UI")) {
-                    // histogram width, height
-                    // viewport width, height
-                    
-                    ImGui::Text("Seed");
-                    ImGui::SameLine();
-                    static int seed = 0;
-                    if(ImGui::InputInt("##seed", &seed, 1, 10000)) {
-                        printf("Seed changing not implemented yet\r\n");
-                    }
-
-                    static float viewport[4] = {-1.0, 1.0, -1.0, 1.0};
-                    
-                    if(!fractal_engine || (fractal_engine && fractal_engine->getStatus())) {
-                        ImGui::BeginDisabled();
-                    }
-
-                    ImGui::Text("minX, maxX, minY, maxY");
-                    if(ImGui::DragFloat4("##viewport", viewport)) {
-                        fractal_engine->setViewport(Viewport(viewport));
-                    };
-
-                    ImGui::SameLine();
-                    
-
-                    if(ImGui::Button("Auto Viewport")) {
-                        fractal_engine->calculateViewport(); // fractal_engine is guaranteed to exist; it would be disabled otherwise
-                        Viewport v = fractal_engine->getViewport();
-                        viewport[0] = static_cast<float>(v.minX);
-                        viewport[1] = static_cast<float>(v.maxX);
-                        viewport[2] = static_cast<float>(v.minY);
-                        viewport[3] = static_cast<float>(v.maxY);
-                    }
-
-                    if(fractal_engine && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {        // i love ImGui
-                       ImGui::SetTooltip("Engine must be paused to change the viewport!");  // they added ImGuiHoveredFlags_AllowWhenDisabled for this exact use case:
-                    }                                                                       // showing why something is disabled
-
-                    if(!fractal_engine || (fractal_engine && fractal_engine->getStatus())) {
-                        ImGui::EndDisabled();
-                    }
-
-                    ImGui::Separator();
-                    ImGui::Text("Note: RAM use is W*H*(64+32)/8 bytes");
-                    
-                    
-                    if(fractal_engine) {
-                        bool histDimChanged = false;
-                        const Histogram<PixelData>* readOnlyHistogram = fractal_engine->getHistogram(); 
-                        int histWidth = readOnlyHistogram->getWidth();
-                        int histHeight = readOnlyHistogram->getHeight();
-                        ImGui::Text("Current RAM use: %.2f GB", ((double)histWidth*histHeight*(64 + 32))/ (double)8E9);
-                        ImGui::Text("Histogram Width");
-                        ImGui::SameLine();
-                        histDimChanged |= ImGui::InputInt("##histWidth", &histWidth, 1, 100);
-                        ImGui::Text("Histogram Height");
-                        ImGui::SameLine();
-                        histDimChanged |= ImGui::InputInt("##histHeight", &histHeight, 1, 100);
-                     
-                        if(histDimChanged && (histWidth > 0 && histHeight > 0)) { // width and height are > 0; if == 0, then no malloc (new) happens
-                            fractal_engine->resize(histWidth, histHeight);
-                        }
-                        glBindTexture(GL_TEXTURE_2D, flameTexture);
-                        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, histWidth, histHeight, // resize texture to new histogram size
-                                    0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-                        glBindTexture(GL_TEXTURE_2D, 0);
-                    }
-                    ImGui::EndTabItem();
-                }
-            if(fractal_engine && !(fractal_engine->getStatus()) && ImGui::BeginTabItem("Presets")) {
-                size_t numPresets = presets.size();
-
-                static std::vector<const char*> presetTitles = {" "};
+                ui.renderTransformTab(fractal_engine, ui);
                 
-                for(size_t i = 0; i < numPresets; i++) {
-                    presetTitles.push_back(presets[i].displayName.c_str());
-                }
+                ui.renderUITab(fractal_engine, flameTexture);
+                
+                if(fractal_engine && !(fractal_engine->getStatus())) {
+                    ui.renderPresetsTab(fractal_engine, ui, presets);
+                    ui.renderRandomTab(fractal_engine);
+                } 
 
-                static int chosenPreset = 0;
-                if(ImGui::Combo("##presetSelector", &chosenPreset, presetTitles.data(), numPresets + 1)) { // +1 for " "
-                    presets.at(chosenPreset - 1).applyPreset(fractal_engine, ui);
-                }
-                ImGui::EndTabItem();
-            }
-
-            ImGui::PopFont();    
-            ImGui::EndTabBar();
+                ImGui::PopFont();    
+                ImGui::EndTabBar();
             }
 
         ImGui::PopStyleVar(2);      
@@ -526,14 +394,20 @@ int main() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
+    
     // Cleanup
+    if(fractal_engine) {
+        fractal_engine->stop();
+        fractal_engine.reset(); // unique_ptr method -- deletes the object, which SHOULD free everything...
+    }
+    
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    printf("Exiting gracefully...");
+    printf("Exiting gracefully...\r\n");
     return 0;
 }
 
@@ -551,3 +425,280 @@ void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palet
         // printf("Histogram uploaded!\r\n");
     }
 }
+
+
+/////////////////////////
+//////// UI TABS ////////
+/////////////////////////
+
+
+void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen) {
+    if(fractal_engine && fractal_engine->getStatus()) {
+        ImGui::BeginDisabled();
+    }
+
+    if(ImGui::Button("[S]")) { 
+        settingsOpen = !settingsOpen;
+    }
+
+    if(fractal_engine && fractal_engine->getStatus()) {
+        ImGui::EndDisabled();
+    }
+}
+
+void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
+    if(fractal_engine) {
+        if(fractal_engine->getStatus()) {
+            if(ImGui::Button("[||]")) { // if it's running, show pause button
+                fractal_engine->stop();
+            }
+        } else { // if it's not running, show play button
+            if(ImGui::Button("[>]")) { 
+                printf("Attempting to start...");
+                fractal_engine->start();
+                if(!fractal_engine->getStatus()) {
+                    printf("Engine failed to start.\r\n");
+                } else {
+                    printf("Engine started.\r\n");
+                }
+            }
+        }
+    }
+
+}
+
+void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
+    if(fractal_engine && fractal_engine->getStatus()) {
+        ImGui::BeginDisabled();
+    }
+
+    if(ImGui::Button("[R]")) {
+        int colorSeed = fractal_engine->randomize();
+        color.randomizeColors(fractal_engine->getTransforms().size(), colorSeed);
+    }
+
+    if(fractal_engine && fractal_engine->getStatus()) {
+        ImGui::EndDisabled();
+    }
+}
+
+bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture) {
+    if(ImGui::BeginTabItem("UI")) {
+        // histogram width, height
+        // viewport width, height
+        
+        ImGui::Text("Seed");
+        ImGui::SameLine();
+        static int seed = 0;
+        if(ImGui::InputInt("##seed", &seed, 1, 10000)) {
+            printf("Seed changing not implemented yet\r\n");
+        }
+
+        static float viewport[4] = {-1.0, 1.0, -1.0, 1.0};
+        
+        if(!fractal_engine || (fractal_engine && fractal_engine->getStatus())) {
+            ImGui::BeginDisabled();
+        }
+
+        ImGui::Text("minX, maxX, minY, maxY");
+        if(ImGui::DragFloat4("##viewport", viewport)) {
+            fractal_engine->setViewport(Viewport(viewport));
+        }   
+
+        ImGui::SameLine();
+        
+
+        if(ImGui::Button("Auto Viewport")) {
+            fractal_engine->calculateViewport(); // fractal_engine is guaranteed to exist; it would be disabled otherwise
+            Viewport v = fractal_engine->getViewport();
+            viewport[0] = static_cast<float>(v.minX);
+            viewport[1] = static_cast<float>(v.maxX);
+            viewport[2] = static_cast<float>(v.minY);
+            viewport[3] = static_cast<float>(v.maxY);
+        }
+
+        if(fractal_engine && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {        // i love ImGui
+            ImGui::SetTooltip("Engine must be paused to change the viewport!");  // they added ImGuiHoveredFlags_AllowWhenDisabled for this exact use case:
+        }                                                                       // showing why something is disabled
+
+        if(!fractal_engine || (fractal_engine && fractal_engine->getStatus())) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Note: RAM use is W*H*(64+32)/8 bytes");
+        
+        
+        if(fractal_engine) {
+            bool histDimChanged = false;
+            const Histogram<PixelData>* readOnlyHistogram = fractal_engine->getHistogram(); 
+            int histWidth = readOnlyHistogram->getWidth();
+            int histHeight = readOnlyHistogram->getHeight();
+            ImGui::Text("Current RAM use: %.2f GB", ((double)histWidth*histHeight*(64 + 32))/ (double)8E9);
+            ImGui::Text("Histogram Width");
+            ImGui::SameLine();
+            histDimChanged |= ImGui::InputInt("##histWidth", &histWidth, 1, 100);
+            ImGui::Text("Histogram Height");
+            ImGui::SameLine();
+            histDimChanged |= ImGui::InputInt("##histHeight", &histHeight, 1, 100);
+            
+            if(histDimChanged && (histWidth > 0 && histHeight > 0)) { // width and height are > 0; if == 0, then no malloc (new) happens
+                fractal_engine->resize(histWidth, histHeight);
+            }
+            glBindTexture(GL_TEXTURE_2D, flameTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, histWidth, histHeight, // resize texture to new histogram size
+                        0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        ImGui::EndTabItem();
+        return true;
+    } else {
+        return false;
+    }
+}
+
+bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui) {
+    if(ImGui::BeginTabItem("Transforms")) {
+        if(!fractal_engine) {
+            ImGui::BeginDisabled();
+        }                     
+        
+        if(ImGui::Button("+ Add Transform")) {
+            Transform newTransform;
+            fractal_engine->addTransform(newTransform);
+            color.add(Color(0, 255, 0));
+        }
+
+        if(!fractal_engine) {
+            ImGui::EndDisabled();
+        } 
+
+        std::vector<Transform> dupe;
+        
+        int numTransforms = 0;
+        if(fractal_engine) {
+            numTransforms = fractal_engine->getTransforms().size();
+            dupe = fractal_engine->getTransforms();
+
+            color.resizeVectors(numTransforms);
+        }
+        
+        for(int i = 0; i < numTransforms; i++) { // 0 if engine is not initialized -- engine is safe to call in loop also
+            ImGui::PushID(i);
+            int variationIndex = dupe[i].variation.index;
+
+            std::vector<const char*> supportedVariations;
+            for(size_t i = 0; i < ui.supportedVariations.size(); i++) {
+                supportedVariations.push_back(ui.supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
+            } // this is an ImGui limitation tbh
+
+            if(ImGui::Combo("##transformSelector", &variationIndex, supportedVariations.data(), supportedVariations.size())) {
+                dupe[i].variation.index = variationIndex; // change the duped index
+                fractal_engine->setTransform(i, dupe[i]);
+            }
+            ImGui::SameLine();
+
+            std::vector<float> transformColors(numTransforms);
+            
+            transformColors = color.floats; // Apparently this does a deep copy! Neat!
+
+            if(ImGui::ColorEdit3("##transformColor", transformColors.data() + i*3, ImGuiColorEditFlags_NoInputs)) {
+                printf("Color changed! ");
+                color.funcColors[i] = Color(transformColors.data() + i*3);
+                color.buildPalette();
+            }
+
+            ImGui::Text("Weight:");
+            ImGui::SameLine();
+            if(ImGui::DragFloat("##weight", &dupe[i].weight, 0.1f, 0.0f, 10.0f, "%.1f")) {
+                printf("Weight of formula %d changed to %.1f.\r\n", i, dupe[i].weight);
+                fractal_engine->setTransform(i, dupe[i]);
+            }
+            ImGui::SameLine();
+            if(ImGui::Button("X")) {
+                fractal_engine->removeTransform(i);
+                color.removeFunc(i);
+            }
+
+            std::vector<double*> affineCoeffs = dupe[i].coeffs.toPtrVector();
+            if(ImGui::CollapsingHeader("Affine")) {
+                bool affineChanged = false;
+                affineChanged |= ImGui::InputDouble("a", affineCoeffs[0], 0.01, 0.1, "%.3f");
+                affineChanged |= ImGui::InputDouble("b", affineCoeffs[1], 0.01, 0.1, "%.3f");
+                affineChanged |= ImGui::InputDouble("c", affineCoeffs[2], 0.01, 0.1, "%.3f");
+                affineChanged |= ImGui::InputDouble("d", affineCoeffs[3], 0.01, 0.1, "%.3f");
+                affineChanged |= ImGui::InputDouble("e", affineCoeffs[4], 0.01, 0.1, "%.3f");
+                affineChanged |= ImGui::InputDouble("f", affineCoeffs[5], 0.01, 0.1, "%.3f");
+
+                if(affineChanged) {
+                    dupe[i].coeffs.a = *affineCoeffs[0];
+                    dupe[i].coeffs.b = *affineCoeffs[1];
+                    dupe[i].coeffs.c = *affineCoeffs[2];
+                    dupe[i].coeffs.d = *affineCoeffs[3];
+                    dupe[i].coeffs.e = *affineCoeffs[4];
+                    dupe[i].coeffs.f = *affineCoeffs[5];
+                    fractal_engine->setTransform(i, dupe[i]);
+                }
+            }
+
+            ImGui::PopID();
+        }
+        
+        
+        ImGui::Separator();
+        // static bool hasFinalTransform = false;
+        // ImGui::Checkbox("Final transform", &hasFinalTransform);
+        // if(hasFinalTransform) {;
+        //     ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
+        //     ImGui::Text("Weight:");
+        //     ImGui::SameLine();
+        //     ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
+        //     ImGui::SameLine();
+        // }
+        ImGui::EndTabItem();
+        return true;
+    } else {
+        return false;
+    }
+}
+
+void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui, std::vector<Preset> &presets) {
+    if(ImGui::BeginTabItem("Presets")) {
+        size_t numPresets = presets.size();
+
+        static std::vector<const char*> presetTitles = {" "};
+    
+        for(size_t i = 0; i < numPresets; i++) {
+            presetTitles.push_back(presets[i].displayName.c_str());
+        }
+
+        static int chosenPreset = 0;
+        if(ImGui::Combo("##presetSelector", &chosenPreset, presetTitles.data(), numPresets + 1)) { // +1 for " "
+            presets.at(chosenPreset - 1).applyPreset(fractal_engine, ui);
+        }
+        ImGui::EndTabItem();
+    }; 
+    
+}
+
+void UIState::renderRandomTab(std::unique_ptr<Engine> &fractal_engine) {
+    if(ImGui::BeginTabItem("Randomize")) {
+        if(ImGui::Button("Randomize!")) {
+            int colorSeed = fractal_engine->randomize();
+            color.randomizeColors(fractal_engine->getTransforms().size(), colorSeed);
+        }
+        
+        static int userSeed = 0; // get the user's seed
+        ImGui::Text("Seed");
+        ImGui::SameLine();
+        ImGui::InputInt("##userSeedPicker", &userSeed, 0, 0);
+        ImGui::SameLine();
+        if(ImGui::Button("Use Seed")) {
+            fractal_engine->randomize(userSeed);
+        }
+    ImGui::EndTabItem();
+    }
+}       
+
+
+

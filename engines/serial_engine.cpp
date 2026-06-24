@@ -54,11 +54,20 @@ class Serial_Engine : public Engine {
                 workingThread.join();
             }
         }
+
+        void reset() {
+            stop();
+            std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
+
+            std::chrono::duration<double> runLength = endTime - startTime;
+            printf("Resetting...\r\n");
+            printf("Run length was %.2f seconds.\r\nThis is an average of %f iterations/sec.", runLength.count(), totalHits[0] / runLength.count());
+        }
         
         Coordinate stepNoPlot(Coordinate c) {
             int func = pickFunction();
 
-            constexpr bool ultra_debug = true;
+            constexpr bool ultra_debug = false;
             if constexpr (ultra_debug) { // if true, constexpr makes this if() compile.  if false, it doesn't get added to the code
                 static std::vector<int> funcHits(transforms.size());
                 static std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
@@ -68,12 +77,12 @@ class Serial_Engine : public Engine {
                     funcHits[func]++;
                 }
 
-                static int totalFuncHits = 0;
+                static uint64_t totalFuncHits = 0;
                 totalFuncHits++;
 
-                if(totalFuncHits % 200000 == 0) {
-                    // every 200k hits, print
-                    printf("totalFuncHits = %d\r\n", totalFuncHits);
+                if(totalFuncHits % 20000000 == 0) {
+                    // every 20m hits, print
+                    printf("totalFuncHits = %ld\r\n", totalFuncHits);
                     // for(size_t i = 0; i < transforms.size(); i++) {
                     //     printf("Function %lu: %d\r\n", i, funcHits[i]);
                     // }
