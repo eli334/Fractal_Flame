@@ -2,28 +2,20 @@
 
 // Implementing the "Variations" from the original flam3 paper (https://flam3.com/flame_draves.pdf - see Appendix)
 
-// Calculation code:
-
-// Coordinate variation(Coordinate c) {} - same header for each -> [(x, y) -> (x, y)]
-
-Coordinate variation_identity(Coordinate c) {
-    return c;
-}
-
-Coordinate variation_sinusoidal(Coordinate c) {
-    return {sin(c.x), sin(c.y)};
-}
-
-Coordinate variation_spherical(Coordinate c) {
-    // r = sqrt(x^2 + y^2) -- distance formula
-    double r2 = (c.x*c.x) + (c.y*c.y); // or std::hypot(c.x, c.y);
-    return {c.x / r2, c.y / r2};
-}
+/* Calculation code:
+    Coordinate variation(Coordinate c) {} - same header for each -> [(x, y) -> (x, y)]
+    other variables:
+    r = sqrt(x^2 + y^2) -- r^2 = x^2 + y^2 -- std::hypot() because this is a hypotenuse
+    theta = arctan(x / y)
+    phi = arctan(y / x)
+*/
 
 
 // engine code
 
 class Serial_Engine : public Engine {
+    private:
+        std::vector<uint64_t> iterationCounters;
     public:
         Serial_Engine() : Engine() {
             setup(1);
@@ -32,6 +24,15 @@ class Serial_Engine : public Engine {
         Coordinate getStartingCoordinate() {
             return {dist(rng), dist(rng), unitDist(rng)};
         }
+
+        uint64_t getTotalIterations() {
+            uint64_t totalIterations = 0;
+            for(size_t i = 0; i < iterationCounters.size(); i++) {
+                totalIterations += iterationCounters[i];
+            }
+            return totalIterations;
+        }
+
 
         void setup(int numThreads, int seed = 0) {
             threadCoords.resize(numThreads);
@@ -133,6 +134,7 @@ class Serial_Engine : public Engine {
                 {0, "Identity", "x, y"},
                 {1, "Sinusoidal", "sin(x), sin(y)"},
                 {2, "Spherical", "x / r^2, y / r^2"}
+                
             };
 
             return supportedVariations;
@@ -143,6 +145,7 @@ class Serial_Engine : public Engine {
         std::mt19937_64 rng; // random number generator, set to 'seed' when run
         std::uniform_real_distribution<double> dist{-1.0, 1.0};   // for x, y starting point
         std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates
+        std::vector<uint64_t> iterationCount; 
         
         int pickFunction() {
             double i = unitDist(rng) * getTotalWeight(); // a number from 0 to totalWeight
@@ -176,30 +179,168 @@ class Serial_Engine : public Engine {
                 case 1: // Sinusoidal
                     affine = variation_sinusoidal(affine);
                     break;
-
                 case 2: // Spherical
                     affine = variation_spherical(affine);
                     break;
-
+                case 3: // Swirl
+                    affine = variation_swirl(affine);
+                    break;
+                case 4: // Horseshoe
+                    affine = variation_horseshoe(affine);
+                    break;
+                case 5: // Polar
+                    affine = variation_polar(affine);
+                    break;
+                case 6: // Handkerchief
+                    affine = variation_handkerchief(affine);
+                    break;
+                case 7: // Heart
+                    affine = variation_heart(affine);
+                    break;
+                case 8: // Disc
+                    affine = variation_disc(affine);
+                    break;
+                case 9: // Spiral
+                    affine = variation_spiral(affine);
+                    break;
+                case 10: // Hyperbolic
+                    affine = variation_hyperbolic(affine);
+                    break;
+                case 11: // Diamond
+                    affine = variation_diamond(affine);
+                    break;
+                case 12: // Ex
+                    affine = variation_ex(affine);
+                    break;
+                case 13: // Julia
+                    affine = variation_julia(affine);
+                    break;
+                case 14: // Bent
+                    affine = variation_bent(affine);
+                    break;
+                case 15: // Waves
+                    affine = variation_waves(affine);
+                    break;
+                case 16: // Fisheye
+                    affine = variation_fisheye(affine);
+                    break;
+                case 17: // Popcorn
+                    affine = variation_popcorn(affine);
+                    break;
+                case 18: // Exponential
+                    affine = variation_exponential(affine);
+                    break;
+                case 19: // Power
+                    affine = variation_power(affine);
+                    break;
+                case 20: // Cosine
+                    affine = variation_cosine(affine);
+                    break;
+                case 21: // Rings
+                    affine = variation_rings(affine);
+                    break;
+                case 22: // Fan
+                    affine = variation_fan(affine);
+                    break;
+                case 23: // Blob
+                    affine = variation_blob(affine);
+                    break;
+                case 24: // PDJ
+                    affine = variation_pdj(affine);
+                    break;
+                case 25: // Fan2
+                    affine = variation_fan2(affine);
+                    break;
+                case 26: // Rings2
+                    affine = variation_rings2(affine);
+                    break;
+                case 27: // Eyefish
+                    affine = variation_eyefish(affine);
+                    break;
+                case 28: // Bubble
+                    affine = variation_bubble(affine);
+                    break;
+                case 29: // Cylinder
+                    affine = variation_cylinder(affine);
+                    break;
+                case 30: // Perspective
+                    affine = variation_perspective(affine);
+                    break;
+                case 31: // Noise
+                    affine = variation_noise(affine);
+                    break;
+                case 32: // JuliaN
+                    affine = variation_julian(affine);
+                    break;
+                case 33: // JuliaScope
+                    affine = variation_juliascope(affine);
+                    break;
+                case 34: // Blur
+                    affine = variation_blur(affine);
+                    break;
+                case 35: // Gaussian
+                    affine = variation_gaussian(affine);
+                    break;
+                case 36: // RadialBlur
+                    affine = variation_radialblur(affine);
+                    break;
+                case 37: // Pie
+                    affine = variation_pie(affine);
+                    break;
+                case 38: // Ngon
+                    affine = variation_ngon(affine);
+                    break;
+                case 39: // Curl
+                    affine = variation_curl(affine);
+                    break;
+                case 40: // Rectangles
+                    affine = variation_rectangles(affine);
+                    break;
+                case 41: // Arch
+                    affine = variation_arch(affine);
+                    break;
+                case 42: // Tangent
+                    affine = variation_tangent(affine);
+                    break;
+                case 43: // Square
+                    affine = variation_square(affine);
+                    break;
+                case 44: // Rays
+                    affine = variation_rays(affine);
+                    break;
+                case 45: // Blade
+                    affine = variation_blade(affine);
+                    break;
+                case 46: // Secant
+                    affine = variation_secant(affine);
+                    break;
+                case 47: // Twintrian
+                    affine = variation_twintrian(affine);
+                    break;
+                case 48: // Cross
+                    affine = variation_cross(affine);
+                    break;
                 default:
-                    affine = affine;
+                    break;
             }
-
             affine.color = (coord.color + t.color) / 2.0;
-
             return affine;
         }
-
+        
         void workerLoop() {
-            printf("Worker loop started.\r\n");
+            // serial engine
+            int index = 0; // will be obtained programatically from OpenMP or CUDA
             Coordinate* currentThreadCoordinate = &threadCoords[0];
-
+            iterationCount.resize(index);
+            printf("Worker loop started.\r\n");
             for(int i = 0; i < 20; i++) {
                 *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate);
             }
 
+            iterationCount[index] = 0;
             while(running) {
                 this->step(*currentThreadCoordinate, 0);
+                iterationCount[index]++;
             }
             printf("Worker loop ended.\r\n");
         }

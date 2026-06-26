@@ -157,7 +157,7 @@ struct UIState {
 
     bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui);
 
-    void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui, std::vector<Preset> &presets);
+    void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
     
     void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
     
@@ -228,6 +228,16 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     GLFWwindow* window = glfwCreateWindow(ui.window_width, ui.window_height, "Fractal Flame Engine", NULL, NULL);
+    glfwSetWindowPos(window, 100, 100);
+
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+
+    printf("bits: \r\nred: %d, green: %d, blue: %d", mode->redBits, mode->greenBits, mode->blueBits);
+
+    int centerX = (mode->width - ui.window_width) / 2;
+    int centerY = (mode->height - ui.window_height) / 2;
+    glfwSetWindowPos(window, centerX, centerY);
     
     if (!window) { glfwTerminate(); printf("glfwTerminate called. \r\n"); return -1; }
     glfwMakeContextCurrent(window);
@@ -261,7 +271,7 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
     
-    std::unique_ptr<Engine> fractal_engine = createSerialEngine();
+    std::unique_ptr<Engine> fractal_engine = selectBackend(1, 1);
 
     const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
         |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs
@@ -369,7 +379,7 @@ int main() {
                 ui.renderUITab(fractal_engine, flameTexture);
                 
                 if(fractal_engine && !(fractal_engine->getStatus())) {
-                    ui.renderPresetsTab(fractal_engine, ui, presets);
+                    ui.renderPresetsTab(fractal_engine, presets);
                     ui.renderRandomTab(fractal_engine);
                 } 
 
@@ -657,7 +667,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
     }
 }
 
-void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui, std::vector<Preset> &presets) {
+void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets) {
     if(ImGui::BeginTabItem("Presets")) {
         size_t numPresets = presets.size();
 
@@ -669,11 +679,10 @@ void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, UIState 
 
         static int chosenPreset = 0;
         if(ImGui::Combo("##presetSelector", &chosenPreset, presetTitles.data(), numPresets + 1)) { // +1 for " "
-            presets.at(chosenPreset - 1).applyPreset(fractal_engine, ui);
+            presets.at(chosenPreset - 1).applyPreset(fractal_engine, *this);
         }
         ImGui::EndTabItem();
     }; 
-    
 }
 
 void UIState::renderRandomTab(std::unique_ptr<Engine> &fractal_engine) {
@@ -681,6 +690,7 @@ void UIState::renderRandomTab(std::unique_ptr<Engine> &fractal_engine) {
         if(ImGui::Button("Randomize!")) {
             int colorSeed = fractal_engine->randomize();
             color.randomizeColors(fractal_engine->getTransforms().size(), colorSeed);
+            
         }
         
         static int userSeed = 0; // get the user's seed

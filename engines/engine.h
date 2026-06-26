@@ -17,6 +17,7 @@
 
 #include <cassert> // debugging
 
+
 // Abstract class for all Fractal Flame rendering engines 
 // CPU, OpenMP, and CUDA implementations all inherit from this
 // See /engines directory for each implementation (Serial, OpenMP, CUDA)
@@ -274,7 +275,9 @@ class Engine {
 		virtual void start() = 0; // infinitely call step()
 		virtual void stop() = 0; // stop infinitely calling step()
 		virtual void reset() = 0; // go back to initial state -- empty histogram 
+		virtual uint64_t getTotalIterations() = 0;// used for data -- frontend reads it, and it's "accurate enough" even if it's slightly wrong
 
+		// not very organized: abstract class is below, this desperately needs a documentation pass
 		float getTotalWeight() {
 			return totalWeight;
 		}
@@ -471,8 +474,6 @@ class Engine {
 
 				size_t low_y = yVector.size() * cutoff;
 				size_t high_y = yVector.size() * (1.0 - cutoff);
-				
-
 
 				setViewport(Viewport(xVector[low_x], xVector[high_x], yVector[low_y], yVector[high_y]));
 			});
@@ -532,6 +533,229 @@ inline void EngineState::applyPreset(std::unique_ptr<Engine>& fractal_engine) { 
 std::unique_ptr<Engine> createSerialEngine();
 std::unique_ptr<Engine> createOpenMPEngine(int threadCount);
 
+
+// Engine Variations //
+// Fractal flame variations based on a paper by Scott Draves & Erik Reckase: 
+// The Fractal Flame Algorithm
+
+// Tbh I could have read the paper more in-depth -- I really didn't read it, and that was kind of the point
+// I explored the concept myself, learning about IFS first, and then expanded my code
+// I struggled to add the log(), and then when it finally worked, I was genuinely shocked by the 3d effect
+// It was different to see the effect so simple in the geometry versus with post-processing
+// I gasped when I ran it and it was so clear -- I will definitely make my post-processing optional.
+
+
+inline Coordinate variation_identity(Coordinate c) { // Variation 00
+    return c;
+}
+
+inline Coordinate variation_sinusoidal(Coordinate c) { // Variation 01
+    return {sin(c.x), sin(c.y)};
+}
+
+inline Coordinate variation_spherical(Coordinate c) { // Variation 02
+    double r2 = c.x*c.x + c.y*c.y;
+    return {c.x / r2, c.y / r2};
+}
+
+inline Coordinate variation_swirl(Coordinate c) { // Variation 03
+    double r2 = (c.x*c.x) + (c.y*c.y);
+    return {c.x * sin(r2) - c.y * cos(r2), c.x * sin(r2) + c.y * cos(r2)};
+}
+
+inline Coordinate variation_horseshoe(Coordinate c) { // Variation 04
+    return {};
+}
+
+inline Coordinate variation_polar(Coordinate c) { // Variation 05
+    return {};
+}
+
+inline Coordinate variation_handkerchief(Coordinate c) { // Variation 06
+    return {};
+}
+
+inline Coordinate variation_heart(Coordinate c) { // Variation 07
+    return {};
+}
+
+inline Coordinate variation_disc(Coordinate c) { // Variation 08
+    return {};
+}
+
+inline Coordinate variation_spiral(Coordinate c) { // Variation 09
+    return {};
+}
+
+inline Coordinate variation_hyperbolic(Coordinate c) { // Variation 10
+    return {};
+}
+
+inline Coordinate variation_diamond(Coordinate c) { // Variation 11
+    return {};
+}
+
+inline Coordinate variation_ex(Coordinate c) { // Variation 12
+    return {};
+}
+
+inline Coordinate variation_julia(Coordinate c) { // Variation 13
+    double r = hypot(c.x*c.x, c.y*c.y); // r = sqrt(x^2 + y^2) -- distance formula --> std::hypot because --march=native flag means it will use my CPU's specific math capabilities in the silicon -- otherwise it will be probably optimized down to the same exact thing anyway because the compiler is smarter than me
+    double sqrtr = sqrt(r);
+    double theta = atan2(c.y, c.x);
+
+    // I need a random, 50/50 number.  I don't want to spawn an RNG number or feed one in or anything -- I need a source of noise
+    // I am going to consider the c.x coordinate's mantissa bits to be random noise. I can memcpy a double to a uint64_t:
+    uint64_t rawDoubleBits;
+    memcpy(&rawDoubleBits, &c.x, 8);
+    // If there is a better source of fast noise, I would gladly fix that line 
+
+    bool omegaIsPi = rawDoubleBits & 1; // get the LSB of the mantissa -- seems like it should be random to me, and the paper doesn't specify what random means.
+
+    double omega = (omegaIsPi ? M_PI : 0); // cool and awesome ternary operator
+
+    return {sqrtr * (cos(theta / 2 + omega)),sqrtr * (sin(theta / 2 + omega))};
+}
+
+inline Coordinate variation_bent(Coordinate c) { // Variation 14
+    return {};
+}
+
+inline Coordinate variation_waves(Coordinate c) { // Variation 15
+    return {};
+}
+
+inline Coordinate variation_fisheye(Coordinate c) { // Variation 16
+    return {};
+}
+
+inline Coordinate variation_popcorn(Coordinate c) { // Variation 17
+    return {};
+}
+
+inline Coordinate variation_exponential(Coordinate c) { // Variation 18
+    return {};
+}
+
+inline Coordinate variation_power(Coordinate c) { // Variation 19
+    return {};
+}
+
+inline Coordinate variation_cosine(Coordinate c) { // Variation 20
+    return {};
+}
+
+inline Coordinate variation_rings(Coordinate c) { // Variation 21
+    return {};
+}
+
+inline Coordinate variation_fan(Coordinate c) { // Variation 22
+    return {};
+}
+
+inline Coordinate variation_blob(Coordinate c) { // Variation 23
+    return {};
+}
+
+inline Coordinate variation_pdj(Coordinate c) { // Variation 24
+    return {};
+}
+
+inline Coordinate variation_fan2(Coordinate c) { // Variation 25
+    return {};
+}
+
+inline Coordinate variation_rings2(Coordinate c) { // Variation 26
+    return {};
+}
+
+inline Coordinate variation_eyefish(Coordinate c) { // Variation 27
+    return {};
+}
+
+inline Coordinate variation_bubble(Coordinate c) { // Variation 28
+    return {};
+}
+
+inline Coordinate variation_cylinder(Coordinate c) { // Variation 29
+    return {};
+}
+
+inline Coordinate variation_perspective(Coordinate c) { // Variation 30
+    return {};
+}
+
+inline Coordinate variation_noise(Coordinate c) { // Variation 31
+    return {};
+}
+
+inline Coordinate variation_julian(Coordinate c) { // Variation 32
+    return {};
+}
+
+inline Coordinate variation_juliascope(Coordinate c) { // Variation 33
+    return {};
+}
+
+inline Coordinate variation_blur(Coordinate c) { // Variation 34
+    return {};
+}
+
+inline Coordinate variation_gaussian(Coordinate c) { // Variation 35
+    return {};
+}
+
+inline Coordinate variation_radialblur(Coordinate c) { // Variation 36
+    return {};
+}
+
+inline Coordinate variation_pie(Coordinate c) { // Variation 37
+    return {};
+}
+
+inline Coordinate variation_ngon(Coordinate c) { // Variation 38
+    return {};
+}
+
+inline Coordinate variation_curl(Coordinate c) { // Variation 39
+    return {};
+}
+
+inline Coordinate variation_rectangles(Coordinate c) { // Variation 40
+    return {};
+}
+
+inline Coordinate variation_arch(Coordinate c) { // Variation 41
+    return {};
+}
+
+inline Coordinate variation_tangent(Coordinate c) { // Variation 42
+    return {};
+}
+
+inline Coordinate variation_square(Coordinate c) { // Variation 43
+    return {};
+}
+
+inline Coordinate variation_rays(Coordinate c) { // Variation 44
+    return {};
+}
+
+inline Coordinate variation_blade(Coordinate c) { // Variation 45
+    return {};
+}
+
+inline Coordinate variation_secant(Coordinate c) { // Variation 46
+    return {};
+}
+
+inline Coordinate variation_twintrian(Coordinate c) { // Variation 47
+    return {};
+}
+
+inline Coordinate variation_cross(Coordinate c) { // Variation 48
+    return {};
+}
 
 #ifdef HAS_CUDA
 std::unique_ptr<Engine> createCUDAEngine();

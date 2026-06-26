@@ -19,6 +19,9 @@ else()
     
     # Release build flags
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto")
+
+    # Ultra speed flags
+    set(CMAKE_CXX_FLAGS_SPEED "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto")
 endif()
 
 find_program(CCACHE_PROGRAM ccache)
