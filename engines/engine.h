@@ -234,9 +234,23 @@ class Engine {
 		std::vector<uint64_t> totalHits{1};
 
 		int seed = 0;
-		std::chrono::_V2::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+		std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+		std::chrono::system_clock::time_point startWallTime = std::chrono::system_clock::now();
+		
+		void recordStartTime() {
+			startTime = std::chrono::steady_clock::now();
+			startWallTime = std::chrono::system_clock::now();
+    	}
+		
+		void configChanged() {
+			globalHistogram.clear();
+			calculateWeight();
+			recalculateColors();
+		}
+
 	private:
 		float totalWeight = 1.0;
+
 		void calculateWeight() {
 			if(transforms.size() == 0) {
 				totalWeight = 1.0; // don't set to 0; step() divides by totalWeight, which would make current.<x or y> NaN
@@ -257,12 +271,6 @@ class Engine {
 				this->transforms[i].color = (float)i / (this->transforms.size() - 1); 
 			}
 		}
-		void configChanged() {
-			globalHistogram.clear();
-			calculateWeight();
-			recalculateColors();
-		}
-
 	public:
 		virtual void step(Coordinate c, int threadIndex) = 0; // iterate coordinate once   
 		virtual Coordinate stepNoPlot(Coordinate c) = 0;
@@ -295,7 +303,7 @@ class Engine {
 		}
 
 		void setViewport(Viewport vp) {
-			stop();
+			if(running) stop();
 			viewport = vp;
 			configChanged();
 		}
@@ -315,14 +323,14 @@ class Engine {
 		}
 
 		void setFinalTransform(Transform final) {
-			stop();
+			if(running) stop();
 			finalTransform = final;
 			hasFinalTransform = true;
 			configChanged();
 		}
 
 		void clearFinalTransform(void) {
-			stop();
+			if(running) stop();
 			if(!hasFinalTransform) return; // don't clear if hasFinalTransform is false already
 			finalTransform = Transform();
 			
@@ -346,7 +354,7 @@ class Engine {
 		}
 
 		void resize(int width, int height) {
-			stop();
+			if(running) stop();
 			globalHistogram.resize(width, height);
 		}
 
@@ -421,28 +429,28 @@ class Engine {
 		
 		void removeTransform(int index) {
 			printf("removeTransform called\r\n");
-			stop();
+			if(running) stop();
 			this->transforms.erase(transforms.begin() + index);
 			configChanged();
 		}
 
 		void addTransform(Transform transform) {
 			printf("addTransform called\r\n");
-			stop();
+			if(running) stop();
 			this->transforms.push_back(transform); // add the transform
 			configChanged();
 		}
 
 		void setTransforms(std::vector<Transform> transforms) {
-			printf("setTransforms called with %d transforms\r\n", (int)transforms.size());
-			stop(); // stop the engine before setting the transforms
+			// printf("setTransforms called with %d transforms\r\n", (int)transforms.size());
+			if(running) stop();
 			this->transforms = transforms; // set the transforms
 			configChanged();
 		}
 
 		void setTransform(int index, Transform transform) {
 			printf("Transform %d changed!\r\n%s", index, transform.toString(index));
-			stop();
+			if(running) stop();
 			this->transforms[index] = transform;
 			configChanged();
 		}
@@ -484,8 +492,8 @@ class Engine {
             printf("Randomize called!\r\n");
 			std::random_device entropyGenerator;
             int randomSeed = (int) entropyGenerator();
-			printf("seed is %d", randomSeed);
-            printf("random_device entropy: %.3f\r\n", entropyGenerator.entropy());
+			// printf("seed is %d\r\n", randomSeed);
+            // printf("random_device entropy: %.3f\r\n", entropyGenerator.entropy());
 			return randomize(randomSeed);
 		}
 
@@ -533,17 +541,41 @@ inline void EngineState::applyPreset(std::unique_ptr<Engine>& fractal_engine) { 
 std::unique_ptr<Engine> createSerialEngine();
 std::unique_ptr<Engine> createOpenMPEngine(int threadCount);
 
+#ifdef HAS_CUDA // My laptop does not have CUDA
+std::unique_ptr<Engine> createCUDAEngine();
+#endif
+
 
 // Engine Variations //
 // Fractal flame variations based on a paper by Scott Draves & Erik Reckase: 
 // The Fractal Flame Algorithm
+// https://flam3.com/flame_draves.pdf
 
 // Tbh I could have read the paper more in-depth -- I really didn't read it, and that was kind of the point
 // I explored the concept myself, learning about IFS first, and then expanded my code
 // I struggled to add the log(), and then when it finally worked, I was genuinely shocked by the 3d effect
-// It was different to see the effect so simple in the geometry versus with post-processing
+// It was different to see the effect so simple in the formerly obvious 2D geometry versus with post-processing bloom + blur
 // I gasped when I ran it and it was so clear -- I will definitely make my post-processing optional.
 
+// Paramater struct -- named accessors for a-f and p1-4, where each returns a double.
+
+struct VarParams {
+	double affine[6]; // a, b, c, d, e, f
+	double params[4]; // p1, p2, p3, p4 in paper
+
+	double a() const { return affine[0]; }
+    double b() const { return affine[1]; }
+    double c() const { return affine[2]; }
+    double d() const { return affine[3]; }
+    double e() const { return affine[4]; }
+    double f() const { return affine[5]; }
+    double p1() const { return params[0]; }
+    double p2() const { return params[1]; }
+    double p3() const { return params[2]; }
+    double p4() const { return params[3]; }
+};
+
+// Variations
 
 inline Coordinate variation_identity(Coordinate c) { // Variation 00
     return c;
@@ -564,7 +596,9 @@ inline Coordinate variation_swirl(Coordinate c) { // Variation 03
 }
 
 inline Coordinate variation_horseshoe(Coordinate c) { // Variation 04
-    return {};
+    double r = std::hypot(c.x, c.y); // hypot finds the distance between two points
+	double inverseR = (1.0 / r);
+	return {inverseR * (c.x - c.y) * (c.x + c.y), inverseR*2*c.x*c.y};
 }
 
 inline Coordinate variation_polar(Coordinate c) { // Variation 05
@@ -756,7 +790,3 @@ inline Coordinate variation_twintrian(Coordinate c) { // Variation 47
 inline Coordinate variation_cross(Coordinate c) { // Variation 48
     return {};
 }
-
-#ifdef HAS_CUDA
-std::unique_ptr<Engine> createCUDAEngine();
-#endif

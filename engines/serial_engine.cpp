@@ -43,6 +43,7 @@ class Serial_Engine : public Engine {
         }
 
         void start() {
+            recordStartTime(); // for logging for data -- I plan on lots of data collection
             running = true;
             printf("Spawning worker...\r\n");
             workingThread = std::thread(&Serial_Engine::workerLoop, this);
@@ -50,50 +51,28 @@ class Serial_Engine : public Engine {
         }
 
         void stop() {
+            static int debugNumCalls = 0;
+            debugNumCalls += 1;
             running = false;
             if(workingThread.joinable()) {
                 workingThread.join();
             }
+            std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double> runLength = endTime - startTime;
+            printf("Stopping... (stop #%d)\r\n", debugNumCalls);
+            printf("Run length was %.2f seconds.\r\nThis is an average of %f iterations/sec.\r\n\r\n", runLength.count(), totalHits[0] / runLength.count());
         }
 
-        void reset() {
-            stop();
-            std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
-
-            std::chrono::duration<double> runLength = endTime - startTime;
-            printf("Resetting...\r\n");
-            printf("Run length was %.2f seconds.\r\nThis is an average of %f iterations/sec.", runLength.count(), totalHits[0] / runLength.count());
+        void reset() { // called when setTransforms is reset
+            printf("Resetting!\r\n");
+            if(running) {
+                stop();
+            }
+            
         }
         
         Coordinate stepNoPlot(Coordinate c) {
             int func = pickFunction();
-
-            constexpr bool ultra_debug = false;
-            if constexpr (ultra_debug) { // if true, constexpr makes this if() compile.  if false, it doesn't get added to the code
-                static std::vector<int> funcHits(transforms.size());
-                static std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
-                funcHits.resize(transforms.size()); // resize to the number of transforms -- not necessarily unchanging in multithreading, so resize
-
-                if (func >= 0 && func < (int)funcHits.size()) {
-                    funcHits[func]++;
-                }
-
-                static uint64_t totalFuncHits = 0;
-                totalFuncHits++;
-
-                if(totalFuncHits % 20000000 == 0) {
-                    // every 20m hits, print
-                    printf("totalFuncHits = %ld\r\n", totalFuncHits);
-                    // for(size_t i = 0; i < transforms.size(); i++) {
-                    //     printf("Function %lu: %d\r\n", i, funcHits[i]);
-                    // }
-                    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-                    std::chrono::duration<double> timeSinceStart = now - startTime; 
-                    
-                    double iterationsPerSec = (double) totalFuncHits / timeSinceStart.count();
-                    printf("Iterations per second: %f\r\n", iterationsPerSec);
-                }
-            }
 
             if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
                 return c;
@@ -112,6 +91,7 @@ class Serial_Engine : public Engine {
         void step(Coordinate c, int threadIndex) {
             threadCoords[threadIndex] = stepNoPlot(c);
             plot(threadCoords[threadIndex]); // plots the current point if within histogram
+
         };
 
         void plot(Coordinate pointToPlot) {
@@ -331,13 +311,14 @@ class Serial_Engine : public Engine {
             // serial engine
             int index = 0; // will be obtained programatically from OpenMP or CUDA
             Coordinate* currentThreadCoordinate = &threadCoords[0];
-            iterationCount.resize(index);
+            iterationCount.resize(index + 1);
             printf("Worker loop started.\r\n");
             for(int i = 0; i < 20; i++) {
                 *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate);
             }
 
             iterationCount[index] = 0;
+
             while(running) {
                 this->step(*currentThreadCoordinate, 0);
                 iterationCount[index]++;
