@@ -16,13 +16,21 @@
 class Serial_Engine : public Engine {
     private:
         std::vector<uint64_t> iterationCounters;
+        std::vector<std::unique_ptr<Xorshift64>> rngs; 
+        std::thread workingThread;
+
     public:
         Serial_Engine() : Engine() {
-            setup(1);
+            std::random_device slowRNG;
+            uint64_t seed = ((uint64_t)slowRNG() << 32) | slowRNG(); // random 64 bit number
+            setup(1, seed);
         };
 
-        Coordinate getStartingCoordinate() {
-            return {dist(rng), dist(rng), unitDist(rng)};
+        Coordinate getStartingCoordinate(int threadIndex) {
+            double x = 1 - 2 *  rngs[threadIndex]->getDouble();
+            double y = 1 - 2 *  rngs[threadIndex]->getDouble();
+            double color = rngs[threadIndex]->getDouble();
+            return {x, y, color};
         }
 
         uint64_t getTotalIterations() {
@@ -34,10 +42,13 @@ class Serial_Engine : public Engine {
         }
 
 
-        void setup(int numThreads, int seed = 0) {
+        void setup(int numThreads, uint64_t seed) {
             threadCoords.resize(numThreads);
-            for(int i = 0; i < numThreads; i++) {
-                threadCoords[i] = getStartingCoordinate();
+            rngs.reserve(numThreads);
+            iterationCounters.resize(numThreads);
+            for(uint64_t i = 0; i < (uint64_t) numThreads; i++) {
+                rngs.emplace_back(std::make_unique<Xorshift64>(seed ^ (i * 2654435761ULL))); // Knuth multiplicative constant (2^32 * the golden ratio)
+                threadCoords[i] = getStartingCoordinate(i);
             }
             setSeed(seed);
         }
@@ -60,7 +71,7 @@ class Serial_Engine : public Engine {
             std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
             std::chrono::duration<double> runLength = endTime - startTime;
             printf("Stopping... (stop #%d)\r\n", debugNumCalls);
-            printf("Run length was %.2f seconds.\r\nThis is an average of %f iterations/sec.\r\n\r\n", runLength.count(), totalHits[0] / runLength.count());
+            printf("Run length was %.2f seconds.\r\nThis is an average of %f iterations/sec.\r\n\r\n", runLength.count(), getTotalIterations() / runLength.count());
         }
 
         void reset() { // called when setTransforms is reset
@@ -71,35 +82,38 @@ class Serial_Engine : public Engine {
             
         }
         
-        Coordinate stepNoPlot(Coordinate c) {
-            int func = pickFunction();
+        Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) {
+            int func = pickFunction(rng);
 
             if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
                 return c;
             }
 
-            c.color = (c.color + transforms[func].color) / 2.0;
-            c = calculate(func, c);
+            c = calculate(func, c, rng);
+
+            if(!std::isfinite(c.x) || !std::isfinite(c.y)) {
+                c = {1 - 2 * rng.getDouble(),  1 - 2 * rng.getDouble(), rng.getDouble()}; // reset to a known good point
+            }
 
             if(hasFinalTransform) {
-                // calculateFinalTransform()
+                c = calculateFinalTransform(c, rng);
+
+                if(!std::isfinite(c.x) || !std::isfinite(c.y)) {
+                    c = {1 - 2 * rng.getDouble(),  1 - 2 * rng.getDouble(), rng.getDouble()}; // reset to a known good point
+                }   
             }
 
             return c;
-        }
+        };
 
-        void step(Coordinate c, int threadIndex) {
-            threadCoords[threadIndex] = stepNoPlot(c);
+        void step(Coordinate c, int threadIndex, Xorshift64 &rng) {
+            threadCoords[threadIndex] = stepNoPlot(c, rng);
             plot(threadCoords[threadIndex]); // plots the current point if within histogram
-
         };
 
         void plot(Coordinate pointToPlot) {
             int plotX = (int)((pointToPlot.x - viewport.minX) / (viewport.maxX - viewport.minX) * globalHistogram.width);
             int plotY = (int)((pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY) * globalHistogram.height);
-
-            // Optimization note: / (viewport.maxX - viewport.minX) * globalHistogram.width); -- all of these do not change.
-            // The only variable that changes is pointToPlot x, y -- I could precompute 
             
             if(plotX >= 0 && plotX < globalHistogram.width && // if within bounds of histogram:
                plotY >= 0 && plotY < globalHistogram.height) {
@@ -110,25 +124,64 @@ class Serial_Engine : public Engine {
         }
 
         std::vector<VariationDef> getSupportedVariations() { // updated by me, per engine, for frontend purposes
-            std::vector<VariationDef> supportedVariations = {
-                {0, "Identity", "x, y"},
-                {1, "Sinusoidal", "sin(x), sin(y)"},
-                {2, "Spherical", "x / r^2, y / r^2"}
-                
+            static std::vector<VariationDef> supportedVariations = { // static for c_str()
+                {0, "Identity"}, // called Linear in paper, but Identity makes more sense
+                {1, "Sinusoidal"},
+                {2, "Spherical"},
+                {3, "Swirl"},
+                {4, "Horseshoe"},
+                {5, "Polar"},
+                {6, "Handkerchief"},
+                {7, "Heart"},
+                {8, "Disc"},
+                {9, "Spiral"},
+                {10, "Hyperbolic"},
+                {11, "Diamond"},
+                {12, "Ex"},
+                {13, "Julia"},
+                {14, "Bent"},
+                {15, "Waves"},
+                {16, "Fisheye"},
+                {17, "Popcorn"},
+                {18, "Exponential"},
+                {19, "Power"},
+                {20, "Cosine"},
+                {21, "Rings"},
+                {22, "Fan"},
+                {23, "Blob"},
+                {24, "PDJ"},
+                {25, "Fan2"},
+                {26, "Rings2"},
+                {27, "Eyefish"},
+                {28, "Bubble"},
+                {29, "Cylinder"},
+                {30, "Perspective"},
+                {31, "Noise"},
+                {32, "JuliaN"},
+                {33, "JuliaScope"},
+                {34, "Blur"},
+                {35, "Gaussian"},
+                {36, "RadialBlur"},
+                {37, "Pie"},
+                {38, "Ngon"},
+                {39, "Curl"},
+                {40, "Rectangles"},
+                {41, "Arch"},
+                {42, "Tangent"},
+                {43, "Square"},
+                {44, "Rays"},
+                {45, "Blade"},
+                {46, "Secant"},
+                {47, "Twintrian"},
+                {48, "Cross"}
             };
 
             return supportedVariations;
         }
 
     private:
-        std::thread workingThread;
-        std::mt19937_64 rng; // random number generator, set to 'seed' when run
-        std::uniform_real_distribution<double> dist{-1.0, 1.0};   // for x, y starting point
-        std::uniform_real_distribution<double> unitDist{0.0, 1.0}; // for color coordinates
-        std::vector<uint64_t> iterationCount; 
-        
-        int pickFunction() {
-            double i = unitDist(rng) * getTotalWeight(); // a number from 0 to totalWeight
+        int pickFunction(Xorshift64 &rng) {
+            double i = rng.getDouble() * getTotalWeight(); // a number from 0 to totalWeight
             float cumulativeWeight = 0;
             for(size_t func = 0; func < transforms.size(); func++) { // [0, slice0), (slice0, slice1)..., (sliceN-1, totalWeight]
                 cumulativeWeight += transforms[func].weight;
@@ -141,9 +194,16 @@ class Serial_Engine : public Engine {
             return (int)transforms.size() - 1; 
         };
 
-        Coordinate calculate(int funcIndex, Coordinate coord) {
-            Transform& t = transforms[funcIndex];
+        Coordinate calculateFinalTransform(Coordinate coord, Xorshift64 &rng) {
+            Coordinate finalTF = calculate(finalTransform, coord, rng);
+            return finalTF;
+        }
 
+        Coordinate calculate(int funcIndex, Coordinate coord, Xorshift64 &rng) {
+            return calculate(transforms[funcIndex], coord, rng);
+        }
+
+        Coordinate calculate(Transform &t, Coordinate coord, Xorshift64 &rng) {
             // apply affine transform first
             Coordinate affine = {
                 t.coeffs.a * coord.x + t.coeffs.b * coord.y + t.coeffs.c,
@@ -152,7 +212,7 @@ class Serial_Engine : public Engine {
             // with identity matrix this maps to
             // (x, y) = (x, y)
 
-            switch(funcIndex) {
+            switch(t.variation.index) {
                 case 0: // Identity
                     affine = variation_identity(affine);
                     break;
@@ -193,19 +253,19 @@ class Serial_Engine : public Engine {
                     affine = variation_ex(affine);
                     break;
                 case 13: // Julia
-                    affine = variation_julia(affine);
+                    affine = variation_julia(affine, &rng);
                     break;
                 case 14: // Bent
                     affine = variation_bent(affine);
                     break;
                 case 15: // Waves
-                    affine = variation_waves(affine);
+                    affine = variation_waves(affine, &t.coeffs);
                     break;
                 case 16: // Fisheye
                     affine = variation_fisheye(affine);
                     break;
                 case 17: // Popcorn
-                    affine = variation_popcorn(affine);
+                    affine = variation_popcorn(affine, &t.coeffs);
                     break;
                 case 18: // Exponential
                     affine = variation_exponential(affine);
@@ -217,22 +277,22 @@ class Serial_Engine : public Engine {
                     affine = variation_cosine(affine);
                     break;
                 case 21: // Rings
-                    affine = variation_rings(affine);
+                    affine = variation_rings(affine, &t.coeffs);
                     break;
                 case 22: // Fan
-                    affine = variation_fan(affine);
+                    affine = variation_fan(affine, &t.coeffs);
                     break;
                 case 23: // Blob
-                    affine = variation_blob(affine);
+                    affine = variation_blob(affine, &t.parametric);
                     break;
                 case 24: // PDJ
-                    affine = variation_pdj(affine);
+                    affine = variation_pdj(affine, &t.parametric);
                     break;
                 case 25: // Fan2
-                    affine = variation_fan2(affine);
+                    affine = variation_fan2(affine, &t.parametric);
                     break;
                 case 26: // Rings2
-                    affine = variation_rings2(affine);
+                    affine = variation_rings2(affine, &t.parametric);
                     break;
                 case 27: // Eyefish
                     affine = variation_eyefish(affine);
@@ -244,58 +304,58 @@ class Serial_Engine : public Engine {
                     affine = variation_cylinder(affine);
                     break;
                 case 30: // Perspective
-                    affine = variation_perspective(affine);
+                    affine = variation_perspective(affine, &t.parametric);
                     break;
                 case 31: // Noise
-                    affine = variation_noise(affine);
+                    affine = variation_noise(affine, &rng);
                     break;
                 case 32: // JuliaN
-                    affine = variation_julian(affine);
+                    affine = variation_julian(affine, &t.parametric, &rng);
                     break;
                 case 33: // JuliaScope
-                    affine = variation_juliascope(affine);
+                    affine = variation_juliascope(affine, &t.parametric, &rng);
                     break;
                 case 34: // Blur
-                    affine = variation_blur(affine);
+                    affine = variation_blur(&rng);
                     break;
                 case 35: // Gaussian
-                    affine = variation_gaussian(affine);
+                    affine = variation_gaussian(&rng);
                     break;
                 case 36: // RadialBlur
-                    affine = variation_radialblur(affine);
+                    affine = variation_radialblur(affine, &t.parametric, &rng);
                     break;
                 case 37: // Pie
-                    affine = variation_pie(affine);
+                    affine = variation_pie(&t.parametric, &rng);
                     break;
                 case 38: // Ngon
-                    affine = variation_ngon(affine);
+                    affine = variation_ngon(affine, &t.parametric);
                     break;
                 case 39: // Curl
-                    affine = variation_curl(affine);
+                    affine = variation_curl(affine, &t.parametric);
                     break;
                 case 40: // Rectangles
-                    affine = variation_rectangles(affine);
+                    affine = variation_rectangles(affine, &t.parametric);
                     break;
                 case 41: // Arch
-                    affine = variation_arch(affine);
+                    affine = variation_arch(&rng);
                     break;
                 case 42: // Tangent
                     affine = variation_tangent(affine);
                     break;
                 case 43: // Square
-                    affine = variation_square(affine);
+                    affine = variation_square(&rng);
                     break;
                 case 44: // Rays
-                    affine = variation_rays(affine);
+                    affine = variation_rays(affine, &rng);
                     break;
                 case 45: // Blade
-                    affine = variation_blade(affine);
+                    affine = variation_blade(affine, &rng);
                     break;
                 case 46: // Secant
                     affine = variation_secant(affine);
                     break;
                 case 47: // Twintrian
-                    affine = variation_twintrian(affine);
+                    affine = variation_twintrian(affine, &rng);
                     break;
                 case 48: // Cross
                     affine = variation_cross(affine);
@@ -309,19 +369,17 @@ class Serial_Engine : public Engine {
         
         void workerLoop() {
             // serial engine
-            int index = 0; // will be obtained programatically from OpenMP or CUDA
-            Coordinate* currentThreadCoordinate = &threadCoords[0];
-            iterationCount.resize(index + 1);
+            int threadIndex = 0; // will be obtained programatically from OpenMP or CUDA
+            Coordinate* currentThreadCoordinate = &threadCoords[threadIndex];
             printf("Worker loop started.\r\n");
             for(int i = 0; i < 20; i++) {
-                *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate);
+                *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate, *rngs[threadIndex]);
+                iterationCounters[threadIndex]++;
             }
 
-            iterationCount[index] = 0;
-
             while(running) {
-                this->step(*currentThreadCoordinate, 0);
-                iterationCount[index]++;
+                this->step(*currentThreadCoordinate, threadIndex, *rngs[threadIndex]);
+                iterationCounters[threadIndex]++;
             }
             printf("Worker loop ended.\r\n");
         }

@@ -1,5 +1,5 @@
 #[[
-Before running, run this command to install dependencies on Ubuntu (CUDA has to be installed seperately -- ):
+Before running, run this command to install dependencies on Ubuntu (CUDA has to be installed seperately -- it will still compile without):
 sudo apt update && sudo apt install -y libwayland-dev build-essential wayland-protocols libxkbcommon-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
 ]]
 

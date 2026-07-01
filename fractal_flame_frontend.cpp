@@ -50,10 +50,6 @@ struct ColorState {
         }
     }
 
-    void forceUIColors() {
-        
-    }
-
     void randomizeColors(int numTransforms, int seed) {
         std::uniform_real_distribution<double> satDist(0.7f, 1.0f);
 		std::uniform_real_distribution<double> valDist(0.7f, 1.0f);
@@ -147,6 +143,10 @@ struct UIState {
         color.resizeVectors(newSize);   
     }
 
+    void renderDebug(std::unique_ptr<Engine> &fractal_engine);
+    bool resetIPS = false;
+    bool debugMenu = false; // defaults to off -- prints affines / parametric coeffs
+
     void renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen);
 
     void renderPlayPaused(std::unique_ptr<Engine> &fractal_engine);
@@ -160,7 +160,6 @@ struct UIState {
     void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
     
     void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
-    
 };  
 
 std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
@@ -199,8 +198,8 @@ const Preset DragonCurve = {
     0,                  // seed
     {-10, 10, -10, 10}, // viewport
     { 
-        Transform{4, 0, VariationDef(), Affine(0.824074, 0.281428, -1.88229, -0.212346, 0.864198, -0.110607)}, 
-        Transform{1, 1, VariationDef(), Affine(0.088272, 0.520988, 0.785360, -0.463889, -0.377778, 8.095795)}
+        Transform{4, 0, VariationDef(), Affine(0.824074, 0.281428, -1.88229, -0.212346, 0.864198, -0.110607), Parametric()}, 
+        Transform{1, 1, VariationDef(), Affine(0.088272, 0.520988, 0.785360, -0.463889, -0.377778, 8.095795), Parametric()}
     },
     false, // hasFinalTransform
     Transform()
@@ -273,6 +272,12 @@ int main() {
     
     std::unique_ptr<Engine> fractal_engine = selectBackend(1, 1);
 
+    std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
+    ui.supportedVariations.resize(vars.size());
+    for(size_t i = 0; i < vars.size(); i++) {
+        ui.supportedVariations[i] = vars[i].name; 
+    }
+
     const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
         |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs
         |   ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
@@ -283,6 +288,10 @@ int main() {
 
     const ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
     
+    const ImGuiWindowFlags ips_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
+        | ImGuiWindowFlags_NoNav;
+
     bool settingsOpen = false;
     static bool wasSettingsOpen = false;
 
@@ -313,6 +322,15 @@ int main() {
         ImGui::PopStyleVar();
 
         if(!settingsOpen) {
+            if(fractal_engine && fractal_engine->getStatus()) {
+                ImGui::SetNextWindowPos({10, 20}, ImGuiCond_Always);
+                ImGui::SetNextWindowSize({400, 150}, ImGuiCond_Always);
+                ImGui::Begin("##ips", nullptr, ips_flags);
+                ui.renderDebug(fractal_engine);
+                ImGui::End();
+            }
+            
+
             ImGui::SetNextWindowPos({10, display.y - 80}, ImGuiCond_Always);
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             
@@ -415,7 +433,7 @@ int main() {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
-    glfwTerminate();
+    glfwTerminate(); // There are still 40 kb allocated in GLFW.  This is a memory leak that they won't fix because the OS reclaims it immediately anyway.  Cool!
 
     printf("Exiting gracefully...\r\n");
     return 0;
@@ -441,6 +459,59 @@ void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palet
 //////// UI TABS ////////
 /////////////////////////
 
+void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
+    if(!fractal_engine) return; // guard just in case
+
+    const double trackingTime = 5.0; // 5 seconds - might be changable by user in future
+    const double updateRate = 20.0;  // 20 Hz
+
+    const double updatePeriod = (1.0 / updateRate);  
+
+    static std::vector<std::pair<double, uint64_t>> buffer;
+
+    if(buffer.empty()) {
+        buffer.reserve(updateRate * trackingTime); // 5 seconds of data
+    }
+
+    if(resetIPS) {
+        buffer.clear();
+        resetIPS = false;
+    }
+    
+    static double lastUpdate = 0.0;
+    
+    std::chrono::steady_clock::time_point nowPoint = std::chrono::steady_clock::now();
+    double now = std::chrono::duration<double>(nowPoint.time_since_epoch()).count();
+
+    uint64_t totalIterations = fractal_engine->getTotalIterations();    
+
+    while(buffer.size() > 1 && now - buffer.front().first > trackingTime) {
+        buffer.erase(buffer.begin());
+    }
+    
+    double timeSinceLast = now - lastUpdate;
+    
+    if(timeSinceLast > updatePeriod) {
+        buffer.emplace_back(now, totalIterations);
+        lastUpdate = now;
+    }
+    double iterPerSec; 
+    if(buffer.size() >= 2) {
+        iterPerSec = ((double) buffer.back().second - (double) buffer.front().second) / (buffer.back().first - buffer.front().first); 
+    } else {
+        iterPerSec = 0; // 0 for .1 sec.. oh well
+    }
+
+    std::vector<Transform> transforms = fractal_engine->getTransforms();
+    
+    ImGui::Text("%.3e iter/sec", iterPerSec);
+    if(debugMenu) {
+        ImGui::Text("Transforms:");
+        for(size_t i = 0; i < transforms.size(); i++) {
+            ImGui::Text("%d: %s", (int) i+1, transforms[i].toString(i));
+        }
+    }
+}
 
 void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen) {
     if(fractal_engine && fractal_engine->getStatus()) {
@@ -474,7 +545,6 @@ void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
             }
         }
     }
-
 }
 
 void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
@@ -483,9 +553,10 @@ void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
     // }
 
     if(ImGui::Button("[R]")) {
-        fractal_engine->stop();
+        if(fractal_engine->getStatus()) fractal_engine->stop();
         int colorSeed = fractal_engine->randomize();
         color.randomizeColors(fractal_engine->getTransforms().size(), colorSeed);
+        resetIPS = true;
         fractal_engine->start();
     }
 
@@ -555,7 +626,12 @@ bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flame
                         0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
+        ImGui::Separator();
+        ImGui::Checkbox("##debugMenuSet", &debugMenu);
+
         ImGui::EndTabItem();
+        
+
         return true;
     } else {
         return false;
@@ -601,6 +677,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
                 dupe[i].variation.index = variationIndex; // change the duped index
                 fractal_engine->setTransform(i, dupe[i]);
             }
+
             ImGui::SameLine();
 
             std::vector<float> transformColors(numTransforms);
@@ -615,7 +692,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
 
             ImGui::Text("Weight:");
             ImGui::SameLine();
-            if(ImGui::DragFloat("##weight", &dupe[i].weight, 0.1f, 0.0f, 10.0f, "%.1f")) {
+            if(ImGui::DragScalar("##weight", ImGuiDataType_Double, &dupe[i].weight, 0.1f, nullptr, nullptr, "%.2f")) {
                 printf("Weight of formula %d changed to %.1f.\r\n", i, dupe[i].weight);
                 fractal_engine->setTransform(i, dupe[i]);
             }
@@ -651,15 +728,31 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
         
         
         ImGui::Separator();
-        // static bool hasFinalTransform = false;
-        // ImGui::Checkbox("Final transform", &hasFinalTransform);
-        // if(hasFinalTransform) {;
-        //     ImGui::Combo("##finalTransformSelector", &fractalConf.finalTransform.variationIndex, UIConf.supportedVariations.data(), (int)UIConf.supportedVariations.size());
-        //     ImGui::Text("Weight:");
-        //     ImGui::SameLine();
-        //     ImGui::DragFloat("##weight", &fractalConf.finalTransform.weight, 0.1f, 0.0f, 10.0f, "%.1f");
-        //     ImGui::SameLine();
-        // }
+        bool hasFinalTransform = fractal_engine->isThereAFinalTransform(); // Is there a final transform?
+        if(ImGui::Checkbox("Final transform", &hasFinalTransform)) {
+            fractal_engine->stop();
+            if(hasFinalTransform) {
+                fractal_engine->setFinalTransform(Transform());
+            } else {
+                fractal_engine->clearFinalTransform();
+            }
+        }
+
+        if(hasFinalTransform) {
+            static int finalTransformIndex = 0;
+
+            std::vector<const char*> supportedVariations;
+            for(size_t i = 0; i < ui.supportedVariations.size(); i++) {
+                supportedVariations.push_back(ui.supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
+            }
+
+            if(ImGui::Combo("##transformSelector", &finalTransformIndex, supportedVariations.data(), supportedVariations.size())) {
+                Transform temp;
+                temp.variation = fractal_engine->getSupportedVariations()[finalTransformIndex];
+                temp.color = 0.5;
+                fractal_engine->setFinalTransform(temp);
+            }
+        }
         ImGui::EndTabItem();
         return true;
     } else {
@@ -671,15 +764,15 @@ void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vec
     if(ImGui::BeginTabItem("Presets")) {
         size_t numPresets = presets.size();
 
-        static std::vector<const char*> presetTitles = {" "};
+        static std::vector<const char*> presetTitles;
     
         for(size_t i = 0; i < numPresets; i++) {
             presetTitles.push_back(presets[i].displayName.c_str());
         }
 
         static int chosenPreset = 0;
-        if(ImGui::Combo("##presetSelector", &chosenPreset, presetTitles.data(), numPresets + 1)) { // +1 for " "
-            presets.at(chosenPreset - 1).applyPreset(fractal_engine, *this);
+        if(ImGui::Combo("##presetSelector", &chosenPreset, presetTitles.data(), numPresets)) {
+            presets.at(chosenPreset).applyPreset(fractal_engine, *this);
         }
         ImGui::EndTabItem();
     }; 
