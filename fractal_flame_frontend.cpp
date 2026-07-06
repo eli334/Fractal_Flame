@@ -14,122 +14,13 @@
 // Fractal Flame frontend
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 
-struct Preset;
-
-struct ColorState {
-    int numColors = 128; // const
-    std::unique_ptr<Color[]> palette;
-    std::vector<Color> funcColors;
-    std::vector<float> floats; // used for ColorEdit3
-    
-
-    ColorState() {
-        palette = std::make_unique<Color[]>(numColors);
-    }
-
-    void add(Color color) { // appends for now
-        funcColors.push_back(color);
-        buildPalette();
-    }
-
-    void removeFunc(int index) {
-        funcColors.erase(funcColors.begin() + index);
-        buildPalette();
-
-        floats.erase(floats.begin() + 3*index, floats.begin() + 3*index+3);
-    }
-
-    void resizeVectors(int numTransforms) {
-        funcColors.resize(numTransforms);
-        floats.resize(numTransforms*3);
-    }
-
-    void clearPalette() {
-        for(int i = 0; i < numColors; i++) {
-            palette[i] = Color(); // set entire array to black
-        }
-    }
-
-    void randomizeColors(int numTransforms, int seed) {
-        std::uniform_real_distribution<double> satDist(0.7f, 1.0f);
-		std::uniform_real_distribution<double> valDist(0.7f, 1.0f);
-		std::mt19937 rng(seed); // pseudorandom -- good enough
-		funcColors.resize(numTransforms);
-		for(int i = 0; i < numTransforms; i++) {
-			double hue = (double)i / numTransforms; // evenly spaced hues [0, 1]
-			double saturation = satDist(rng);
-			double value = valDist(rng);
-			funcColors[i] = Color::hsvToRGB(hue, saturation, value);
-            printf("funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
-		}
-		buildPalette();
-    }
-
-    void buildPalette() {
-        clearPalette();
-        buildPalette(numColors);
-    }
-
-    void buildPalette(int numColors) {
-        palette = std::make_unique<Color[]>(numColors);
-        printf("There are %ld functions.\r\n", funcColors.size());
-        std::vector<Color> lerpColors;
-        
-        if(funcColors.size() == 0) {
-            lerpColors.push_back(Color());
-            lerpColors.push_back(Color(255, 255, 255));
-        } else if(funcColors.size() == 1) {
-            lerpColors.push_back(Color());
-            lerpColors.push_back(funcColors[0]);
-        } else { // size 2 or greater
-            lerpColors = funcColors;
-        }
-
-        for(int i = 0; i < numColors; i++) {
-            double t = (double)i / (numColors - 1); // t is the lerp amount
-            double segmentSize = 1.0 / (lerpColors.size() - 1); // size - 1 -> # of splits, all same size
-            size_t segment = static_cast<size_t>(t / segmentSize);
-            if(segment > lerpColors.size() - 2) {
-                segment = lerpColors.size() - 2;
-            }
-
-            double localT = (t - segment * segmentSize) / segmentSize; // now lerp within the segment
-            Color& a = lerpColors[segment]; // color to lerp from
-            Color& b = lerpColors[segment + 1]; // color to lerp to
-
-            palette[i].r = static_cast<uint8_t>(a.r + localT * (b.r - a.r));
-            palette[i].g = static_cast<uint8_t>(a.g + localT * (b.g - a.g));
-            palette[i].b = static_cast<uint8_t>(a.b + localT * (b.b - a.b));
-        }
-
-        printf("Palette made!\r\n");
-        
-        floats.resize(funcColors.size()*3);
-        for(size_t i = 0; i < funcColors.size(); i++) {
-            floats[3*i+0] = funcColors[i].r / 255.0; 
-            floats[3*i+1] = funcColors[i].g / 255.0;
-            floats[3*i+2] = funcColors[i].b / 255.0;
-        }
-        printf("Floats changed!\r\n");
-    }
-
-    const Color* getPalettePtr() {
-        return palette.get();
-    }
-
-    ~ColorState() {
-        clearPalette();
-    }
-    
-};
-
-
 struct UIState {
     int selectedBackend = 1; // defaults to Serial when opening window for now
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f; // 20% of screen width
     uint16_t window_width = 1280, window_height = 720;
     ColorState color;
+    Camera view;
 
     int threadCount = 1;
     std::vector<std::string> supportedVariations;
@@ -149,17 +40,36 @@ struct UIState {
 
     void renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen);
 
+    void renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos);
+
     void renderPlayPaused(std::unique_ptr<Engine> &fractal_engine);
 
     void renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine);
 
     bool renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture);
 
-    bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui);
+    bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine);
 
     void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
     
     void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
+
+    // refactor this in the future
+    const ImGuiWindowFlags button_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
+        | ImGuiWindowFlags_NoNav;
+
+    const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
+    |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
+
+    const ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
+    
+    const ImGuiWindowFlags ips_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
+        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
+        | ImGuiWindowFlags_NoNav;
+
+
+
 };  
 
 std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
@@ -179,7 +89,7 @@ std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
 }
 GLuint flameTexture = 0; // global Texture id
 
-void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palette, int paletteSize);
+void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, UIState &ui, double gamma);
 
 struct Preset {
     std::string displayName = "None"; // name for the preset - displayed in ImGui
@@ -278,20 +188,7 @@ int main() {
         ui.supportedVariations[i] = vars[i].name; 
     }
 
-    const ImGuiWindowFlags flame_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize 
-        |   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs
-        |   ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
     
-    const ImGuiWindowFlags button_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
-        | ImGuiWindowFlags_NoNav;
-
-    const ImGuiWindowFlags settings_flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
-    
-    const ImGuiWindowFlags ips_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
-        | ImGuiWindowFlags_NoNav;
-
     bool settingsOpen = false;
     static bool wasSettingsOpen = false;
 
@@ -313,11 +210,26 @@ int main() {
         ImGui::SetNextWindowSize(display);
         ImGui::SetNextWindowBgAlpha(0.0f);
         
-        uploadHistogram(fractal_engine, ui.color.getPalettePtr(), ui.color.numColors); // update flameTexture
+        uploadHistogram(fractal_engine, ui, ui.color.gamma); // update flameTexture
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0, 0});
-        ImGui::Begin("##flameview", nullptr, flame_flags);
+        ImGui::Begin("##flameview", nullptr, ui.flame_flags);
         ImGui::Image((ImTextureID)(intptr_t)flameTexture, display);
+
+        if(ImGui::IsItemHovered()) {
+            if(ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                ImVec2 delta = ImGui::GetIO().MouseDelta;
+                ui.view.centerX -= delta.x / display.x;
+                ui.view.centerY -= delta.y / display.y;
+            }
+
+            float wheel = ImGui::GetIO().MouseWheel;
+            if(wheel != 0) {
+                ui.view.zoom *= (1.0 + wheel * 0.1);
+            }
+        }
+
+
         ImGui::End();
         ImGui::PopStyleVar();
 
@@ -325,7 +237,7 @@ int main() {
             if(fractal_engine && fractal_engine->getStatus()) {
                 ImGui::SetNextWindowPos({10, 20}, ImGuiCond_Always);
                 ImGui::SetNextWindowSize({400, 150}, ImGuiCond_Always);
-                ImGui::Begin("##ips", nullptr, ips_flags);
+                ImGui::Begin("##ips", nullptr, ui.ips_flags);
                 ui.renderDebug(fractal_engine);
                 ImGui::End();
             }
@@ -334,31 +246,27 @@ int main() {
             ImGui::SetNextWindowPos({10, display.y - 80}, ImGuiCond_Always);
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             
-            ImGui::Begin("##randomizeButton", nullptr, button_flags);
             ui.renderRandomizeButton(fractal_engine);
-            ImGui::End();
+
+            
+            ui.renderQuickEdit(fractal_engine, ui, {60, display.y - 80});
 
 
             ImGui::SetNextWindowPos({10, display.y - 40}, ImGuiCond_Always); // settings positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             
-            ImGui::Begin("##settingsButton", nullptr, button_flags);
+            
             ui.renderSettingsButton(fractal_engine, settingsOpen);
-            ImGui::End();
 
 
             ImGui::SetNextWindowPos({60, display.y - 40}, ImGuiCond_Always); // play/pause positioning
             ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
             
-            ImGui::Begin("##playPause", nullptr, button_flags);
+            
             ui.renderPlayPaused(fractal_engine);
-            ImGui::End();
+            
 
         } else { // if settings is open:
-            ImGui::SetNextWindowPos({10, 40}, ImGuiCond_Always); // settings positioning
-            ImGui::SetNextWindowSize({500, display.y - 80}, ImGuiCond_Always);
-            ImGui::Begin("Settings", &settingsOpen, settings_flags); // Contents of the Settings menu:
-            
             const char* backends[] = {"None","Serial", "OpenMP"
             #ifdef HAS_CUDA
                 , "CUDA"
@@ -367,10 +275,16 @@ int main() {
 
             static int selectedBackend = 1;
 
+
+            ImGui::SetNextWindowPos({10, 40}, ImGuiCond_Always); // settings positioning
+            ImGui::SetNextWindowSize({500, display.y - 80}, ImGuiCond_Always);
+            
+            ImGui::Begin("Settings", &settingsOpen, ui.settings_flags); // Contents of the Settings menu:
             ImGui::PushFont(NULL, 18.0f);
             
             ImGui::Text("Backend:");
             ImGui::SameLine();
+            
             ImGui::SetNextItemWidth(100); // 100 px
             if(ImGui::Combo("##backendSelector", &selectedBackend, backends, IM_ARRAYSIZE(backends))) {
                 fractal_engine = selectBackend(selectedBackend, ui.threadCount);
@@ -392,7 +306,7 @@ int main() {
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 12.0f); // move blue tab line down by 12 pixels
             if(ImGui::BeginTabBar("##settingsTabs", ImGuiTabBarFlags_None)) {
                 ImGui::PushFont(NULL, 20.0f); 
-                ui.renderTransformTab(fractal_engine, ui);
+                ui.renderTransformTab(fractal_engine);
                 
                 ui.renderUITab(fractal_engine, flameTexture);
                 
@@ -439,13 +353,16 @@ int main() {
     return 0;
 }
 
-void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, const Color* palette, int paletteSize) { // function to push the global_histogram to opengl
+void uploadHistogram(std::unique_ptr<Engine> &fractal_engine, UIState &ui, double gamma) { // function to push the global_histogram to opengl
     if(!fractal_engine) return;
     static std::vector<uint8_t> pixels;
     int width = fractal_engine->getHistogram()->getWidth();
     int height = fractal_engine->getHistogram()->getHeight();
     pixels.resize(width * height * 4);
-    if(fractal_engine->fillPixelBuffer(pixels.data(), palette, paletteSize)) { // if the pixel buffer was updated, reupload
+    if(fractal_engine->fillPixelBuffer(pixels.data(), ui.color.palette.get(), ui.color.numColors, gamma, ui.view)) { // if the pixel buffer was updated, reupload bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma)
+        ImVec2 imageMin = ImGui::GetItemRectMin();
+        ImVec2 imageMax = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(imageMin, imageMax, IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f); // 1 px white rectangle around image
         glBindTexture(GL_TEXTURE_2D, flameTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                         GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
@@ -483,7 +400,7 @@ void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
     std::chrono::steady_clock::time_point nowPoint = std::chrono::steady_clock::now();
     double now = std::chrono::duration<double>(nowPoint.time_since_epoch()).count();
 
-    uint64_t totalIterations = fractal_engine->getTotalIterations();    
+    uint64_t totalIterations = fractal_engine->getTotalIterations();
 
     while(buffer.size() > 1 && now - buffer.front().first > trackingTime) {
         buffer.erase(buffer.begin());
@@ -505,6 +422,9 @@ void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
     std::vector<Transform> transforms = fractal_engine->getTransforms();
     
     ImGui::Text("%.3e iter/sec", iterPerSec);
+    ImGui::Text("%.1f fps", ImGui::GetIO().Framerate);
+    ImGui::Text("Total Iterations: %.2e", (double)totalIterations);
+    ImGui::Text("Max Hits:         %.2e", (double)fractal_engine->getMaxHits());
     if(debugMenu) {
         ImGui::Text("Transforms:");
         for(size_t i = 0; i < transforms.size(); i++) {
@@ -514,6 +434,7 @@ void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
 }
 
 void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen) {
+    ImGui::Begin("##settingsButton", nullptr, button_flags);
     if(fractal_engine && fractal_engine->getStatus()) {
         ImGui::BeginDisabled();
     }
@@ -525,9 +446,54 @@ void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool
     if(fractal_engine && fractal_engine->getStatus()) {
         ImGui::EndDisabled();
     }
+    ImGui::End();
+}
+
+void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos) {
+    static bool quickEditOpen = false;
+    
+    if(!fractal_engine) return; // guard against fractal_engine not existing
+
+    if(!quickEditOpen) {
+        ImGui::SetNextWindowPos({buttonPos.x, buttonPos.y}, ImGuiCond_Always); // quickEdit positioning
+        ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
+        ImGui::Begin("##QEButton", nullptr, button_flags);
+        if(ImGui::Button("[Q]")) { 
+            quickEditOpen = !quickEditOpen;
+        }
+        ImGui::End();
+    } else  {
+        ImGui::SetNextWindowPos({60, 80}, ImGuiCond_Appearing); // quickEdit positioning
+        ImGui::SetNextWindowSize({300, 200}, ImGuiCond_Appearing);
+        ImGui::Begin("Quick Edit", &quickEditOpen);
+        float gammaSlider = (float) color.gamma;
+        if(ImGui::SliderFloat("Gamma", &gammaSlider, 0.1, 10, "%.1f")) {
+            color.gamma = (double) gammaSlider;
+        }
+
+        double minPanX = 0.0, maxPanX = 1.0;
+        double minPanY = 0.0, maxPanY = 1.0;
+        double minZoom = 0.1, maxZoom = 10.0;
+        if(ImGui::SliderScalar("CameraX", ImGuiDataType_Double, &ui.view.centerX, &minPanX, &maxPanX, "%.2f")) {
+            // technically I shouldn't need to do anything
+        }
+
+        if(ImGui::SliderScalar("CameraY", ImGuiDataType_Double, &ui.view.centerY, &minPanY, &maxPanY, "%.2f")) {
+            // technically I shouldn't need to do anything
+        }
+        
+        if(ImGui::SliderScalar("Zoom", ImGuiDataType_Double, &ui.view.zoom, &minZoom, &maxZoom, "%.1f")) {
+            // technically I shouldn't need to do anything
+        }
+
+        
+
+        ImGui::End();
+    }
 }
 
 void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
+    ImGui::Begin("##playPause", nullptr, button_flags);
     if(fractal_engine) {
         if(fractal_engine->getStatus()) {
             if(ImGui::Button("[||]")) { // if it's running, show pause button
@@ -545,6 +511,7 @@ void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
             }
         }
     }
+    ImGui::End();
 }
 
 void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
@@ -552,6 +519,9 @@ void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
     //     ImGui::BeginDisabled();
     // }
 
+    
+
+    ImGui::Begin("##randomizeButton", nullptr, button_flags);
     if(ImGui::Button("[R]")) {
         if(fractal_engine->getStatus()) fractal_engine->stop();
         int colorSeed = fractal_engine->randomize();
@@ -559,6 +529,7 @@ void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
         resetIPS = true;
         fractal_engine->start();
     }
+    ImGui::End();
 
     // if(fractal_engine && fractal_engine->getStatus()) {
     //     ImGui::EndDisabled();
@@ -638,7 +609,7 @@ bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flame
     }
 }
 
-bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIState &ui) {
+bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine) {
     if(ImGui::BeginTabItem("Transforms")) {
         if(!fractal_engine) {
             ImGui::BeginDisabled();
@@ -668,12 +639,12 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
             ImGui::PushID(i);
             int variationIndex = dupe[i].variation.index;
 
-            std::vector<const char*> supportedVariations;
-            for(size_t i = 0; i < ui.supportedVariations.size(); i++) {
-                supportedVariations.push_back(ui.supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
+            std::vector<const char*> supportedVars;
+            for(size_t i = 0; i < supportedVariations.size(); i++) {
+                supportedVars.push_back(supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
             } // this is an ImGui limitation tbh
 
-            if(ImGui::Combo("##transformSelector", &variationIndex, supportedVariations.data(), supportedVariations.size())) {
+            if(ImGui::Combo("##transformSelector", &variationIndex, supportedVars.data(), supportedVars.size())) {
                 dupe[i].variation.index = variationIndex; // change the duped index
                 fractal_engine->setTransform(i, dupe[i]);
             }
@@ -741,12 +712,12 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine, UIStat
         if(hasFinalTransform) {
             static int finalTransformIndex = 0;
 
-            std::vector<const char*> supportedVariations;
-            for(size_t i = 0; i < ui.supportedVariations.size(); i++) {
-                supportedVariations.push_back(ui.supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
+            std::vector<const char*> supportedVars;
+            for(size_t i = 0; i < supportedVariations.size(); i++) {
+                supportedVars.push_back(supportedVariations[i].c_str()); // rebuild every frame -- supportedVariations leaves scope every frame, but it can't be static because ui could change 
             }
 
-            if(ImGui::Combo("##transformSelector", &finalTransformIndex, supportedVariations.data(), supportedVariations.size())) {
+            if(ImGui::Combo("##transformSelector", &finalTransformIndex, supportedVars.data(), supportedVars.size())) {
                 Transform temp;
                 temp.variation = fractal_engine->getSupportedVariations()[finalTransformIndex];
                 temp.color = 0.5;

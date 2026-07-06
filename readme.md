@@ -29,7 +29,7 @@ $ sudo apt install -y libwayland-dev build-essential wayland-protocols libxkbcom
 ```shell 
 $ git clone https://github.com/eli334/Fractal_Flame.git
 ```
-- Inside the repo:
+3. Inside the repo:
 ```shell 
 $ mkdir build && cd build
 $ cmake ..

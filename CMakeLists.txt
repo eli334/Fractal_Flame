@@ -1,13 +1,10 @@
-#[[
-Before running, run this command to install dependencies on Ubuntu (CUDA has to be installed seperately -- it will still compile without):
-sudo apt update && sudo apt install -y libwayland-dev build-essential wayland-protocols libxkbcommon-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
-]]
-
 cmake_minimum_required(VERSION 3.16)
 project(FractalFlame CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # --- Compiler flags ---
 if(MSVC)
@@ -15,7 +12,7 @@ if(MSVC)
     add_compile_options(/W4 /WX) 
 else()
     # Debug build flags
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined -Wall -Wextra")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined -Wall -Wextra -pg")
     
     # Release build flags
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto")

@@ -1,7 +1,5 @@
 #include "./engine.h"
 
-// Implementing the "Variations" from the original flam3 paper (https://flam3.com/flame_draves.pdf - see Appendix)
-
 /* Calculation code:
     Coordinate variation(Coordinate c) {} - same header for each -> [(x, y) -> (x, y)]
     other variables:
@@ -26,6 +24,7 @@ class Serial_Engine : public Engine {
             setup(1, seed);
         };
 
+        // randomly get an x, y, and color coordinate
         Coordinate getStartingCoordinate(int threadIndex) {
             double x = 1 - 2 *  rngs[threadIndex]->getDouble();
             double y = 1 - 2 *  rngs[threadIndex]->getDouble();
@@ -33,12 +32,25 @@ class Serial_Engine : public Engine {
             return {x, y, color};
         }
 
+        // get the total number of iterations from all threads
         uint64_t getTotalIterations() {
             uint64_t totalIterations = 0;
             for(size_t i = 0; i < iterationCounters.size(); i++) {
                 totalIterations += iterationCounters[i];
             }
             return totalIterations;
+        }
+
+        // get value of hottest histogram bin
+        uint64_t getMaxHits() {
+            // for(size_t i = 0; i < iterationCounters.size(); i++) {
+            //     if(maxIterations < iterationCounters[i]) {
+            //         maxIterations = iterationCounters[i];
+            //     }
+            // }
+            if(iterationCounters.empty()) return 0;
+            PixelData maxHistogramBin = *std::max_element(globalHistogram.data.begin(), globalHistogram.data.end());  
+            return maxHistogramBin.hits;
         }
 
 

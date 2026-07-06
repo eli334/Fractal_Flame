@@ -124,6 +124,10 @@ struct Coordinate {
 struct PixelData{
 	uint64_t hits = 0;
 	double color = 0;
+
+	bool operator<(const PixelData& other) {
+		return hits < other.hits;
+	}
 };
 
 template<typename T> // PixelData
@@ -131,6 +135,10 @@ class Histogram {
 	public:
 		int width = 1000, height = 1000;
 		std::vector<T> data;
+
+		T operator[](int index) {
+			return data[index];
+		}
 
 		Histogram(int desiredWidth = 1000, int desiredHeight = 1000) : width(desiredWidth), height(desiredHeight) {
 			data.resize(desiredWidth*desiredHeight);
@@ -233,6 +241,12 @@ struct Viewport {
 	}
 };
 
+struct Camera {
+	double centerX = 0.5;
+	double centerY = 0.5;
+	double zoom = 1.0;
+};
+
 // xorshift64 -- fast, pseudorandom number generator
 
 struct Xorshift64 {
@@ -258,6 +272,8 @@ struct Xorshift64 {
 };
 
 class Engine;
+
+struct ColorState; 
 
 struct EngineState {
 	int seed = 0;
@@ -333,6 +349,7 @@ class Engine {
 		virtual void stop() = 0; // stop infinitely calling step()
 		virtual void reset() = 0; // go back to initial state -- empty histogram 
 		virtual uint64_t getTotalIterations() = 0;// used for data -- frontend reads it, and it's "accurate enough" even if it's slightly wrong
+		virtual uint64_t getMaxHits() = 0;
 
 		// not very organized: abstract class is below, this desperately needs a documentation pass
 		float getTotalWeight() {
@@ -407,13 +424,13 @@ class Engine {
 			globalHistogram.resize(width, height);
 		}
 
-		/** might refactor with Doxygen next -- I like good documentation, and this engine lacks that
+		/** might refactor with Doxygen next -- I like good documentation, and this entire project lacks that
 		// @brief fills pixels[] with RGBA data
 		// @param pixels must point to a buffer of at least Engine*->getWidth() * Engine*->getHeight() * 4 bytes
-		// @param palette must have (paletteSize * 3 bytes per color) bytes allocated
+		// @param UIState.color.palette must have (paletteSize * 3 bytes per color) bytes allocated
 		// @returns Returns true if buffer changed, false if no change
 		*/
-		bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize) { // function to calculate colors for texture, returns false if no change
+		bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma, const Camera &view) { // function to calculate colors for texture, returns false if no change
 			if(!getStatus()) return false; // if it isn't running, then the buffer is not changing
 			
 			static uint64_t lastMaxVal = 0;
@@ -422,8 +439,8 @@ class Engine {
 			int height = globalHistogram.getHeight();
 
 			for(int i = 0; i < width*height; i++) {
-				if(globalHistogram.get(i).hits > maxVal) {
-					maxVal = globalHistogram.get(i).hits;
+				if(globalHistogram[i].hits > maxVal) {
+					maxVal = globalHistogram[i].hits;
 				}
 			}
 			if(maxVal == 0) return false; // don't render when nothing has generated yet
@@ -437,36 +454,81 @@ class Engine {
 
 			if(maxVal != lastMaxVal) {
 				logTable.resize(maxVal + 1);
-				for(uint64_t logTableIndex = 1; logTableIndex <= maxVal; logTableIndex++) {
-					logTable[logTableIndex] = std::log((double) logTableIndex) / logMax; // recreate the logTable when 
+				for(uint64_t i = lastMaxVal + 1; i <= maxVal; i++) {
+					logTable[i] = std::log((double) i); // extend log table, dividing by brightness at render time
 				}
 			}
 
-			for(int i = 0; i < width*height; i++) {
-				// 8 bits per pixel
-				// logarithmically map brightness
-				if(globalHistogram.get(i).hits == 0) {
-					pixels[i*4+0] = 0;  
-					pixels[i*4+1] = 0;  
-					pixels[i*4+2] = 0;  
-					pixels[i*4+3] = 255; // alpha of 255 is fully opaque
-					continue;
-				} // untouched pixels are black
-				PixelData currentPixel = globalHistogram.get(i);
-				// double brightness = std::log(currentPixel.hits) / logMax; // log of hist[i] for every index of the entire histogram
-				// one million log() operations per frame (oof!) [lookup table?]
-				uint64_t clamped = std::min(currentPixel.hits, maxVal); // algorithm is my favorite library
-				double brightness = logTable[clamped];
+			// for(int i = 0; i < width*height; i++) {
+			// 	// 8 bits per pixel
+			// 	// logarithmically map brightness
+			// 	if(globalHistogram.get(i).hits == 0) {
+			// 		pixels[i*4+0] = 0;  
+			// 		pixels[i*4+1] = 0;  
+			// 		pixels[i*4+2] = 0;  
+			// 		pixels[i*4+3] = 255; // alpha of 255 is fully opaque
+			// 		continue;
+			// 	} // untouched pixels are black
+			// 	PixelData currentPixel = globalHistogram.get(i);
+			// 	// double brightness = std::log(currentPixel.hits) / logMax; // log of hist[i] for every index of the entire histogram
+			// 	// one million log() operations per frame (oof!) [lookup table?]
+			// 	uint64_t clamped = std::min(currentPixel.hits, maxVal); // algorithm is my favorite library
+			// 	double brightness = logTable[clamped] / logMax;
 
-				// dividing by the max value makes the max 1 and the rest a number between 0 and 1
-				// brightness = std::pow(brightness, 1.0/2.2); // gamma correction
-				double colorCoord = currentPixel.color / static_cast<double>(currentPixel.hits); 
-				int paletteIndex = (int)(colorCoord * (paletteSize - 1));
-				pixels[i*4+0] = (uint8_t)(palette[paletteIndex].r * brightness); // red  
-				pixels[i*4+1] = (uint8_t)(palette[paletteIndex].g * brightness); // green
-				pixels[i*4+2] = (uint8_t)(palette[paletteIndex].b * brightness); // blue
-				pixels[i*4+3] = 255; // alpha of 255 is fully opaque
+			// 	// dividing by the max value makes the max 1 and the rest a number between 0 and 1
+			// 	brightness = std::pow(brightness, 1.0/gamma); // gamma correction
+			// 	double colorCoord = currentPixel.color / static_cast<double>(currentPixel.hits); 
+			// 	int paletteIndex = (int)(colorCoord * (paletteSize - 1));
+			// 	pixels[i*4+0] = (uint8_t)(palette[paletteIndex].r * brightness); // red  
+			// 	pixels[i*4+1] = (uint8_t)(palette[paletteIndex].g * brightness); // green
+			// 	pixels[i*4+2] = (uint8_t)(palette[paletteIndex].b * brightness); // blue
+			// 	pixels[i*4+3] = 255; // alpha of 255 is fully opaque
+			// }
+
+			for(int pixelX = 0; pixelX < width; pixelX++) {
+				for(int pixelY = 0; pixelY < height; pixelY++) {
+					// normalized [0,1]
+					double normalizedX = (double)pixelX / width;
+					double normalizedY = (double)pixelY / height;
+					
+					// apply camera: center offset and zoom
+					double histogramX = (normalizedX - 0.5) / view.zoom + view.centerX;
+					double histogramY = (normalizedY - 0.5) / view.zoom + view.centerY;
+					
+					// back to histogram bin
+					int binX = (int)(histogramX * width);
+					int binY = (int)(histogramY * height);
+					
+					if(binX < 0 || binX >= width || binY < 0 || binY >= height) {
+						// out of bounds -- black
+						pixels[(pixelY * width + pixelX)*4 + 0] = 0;
+						pixels[(pixelY * width + pixelX)*4 + 1] = 0;
+						pixels[(pixelY * width + pixelX)*4 + 2] = 0;
+						pixels[(pixelY * width + pixelX)*4 + 3] = 255;
+					} else {
+						int binIndex = binY * width + binX;
+						PixelData currentPixel = globalHistogram[binIndex];
+
+						// sample histogram at binIndex
+
+						uint64_t logTableSize = (uint64_t)(logTable.size() - 1); // stops render thread from overtaking logTable thread, clamping it
+
+						double brightness = logTable[std::min(currentPixel.hits, logTableSize)] / logMax;
+
+						// dividing by the max value makes the max 1 and the rest a number between 0 and 1
+						brightness = std::pow(brightness, 1.0/gamma); // gamma correction
+						double colorCoord = std::min(1.0, currentPixel.color / static_cast<double>(currentPixel.hits)); 
+						
+						int paletteIndex = (int)(colorCoord * (paletteSize - 1));
+						pixels[(pixelY * width + pixelX)*4 + 0] = (uint8_t)(palette[paletteIndex].r * brightness); // red  
+						pixels[(pixelY * width + pixelX)*4 + 1] = (uint8_t)(palette[paletteIndex].g * brightness); // green
+						pixels[(pixelY * width + pixelX)*4 + 2] = (uint8_t)(palette[paletteIndex].b * brightness); // blue
+						pixels[(pixelY * width + pixelX)*4 + 3] = 255; // alpha of 255 is fully opaque
+					}
+				}
 			}
+
+
 			// buffer done filling
 			lastMaxVal = maxVal;
 			return true;
@@ -1066,3 +1128,114 @@ inline Coordinate variation_cross(Coordinate c) { // Variation 48
     double coeff = sqrt(1.0 / (r2*r2));
     return {coeff * c.x, coeff * c.y};
 }
+
+// TODO: move some state stuff to different cpp file, to reduce clutter in engine
+
+struct Preset;
+
+struct ColorState {
+    int numColors = 128; // const
+    std::unique_ptr<Color[]> palette;
+    std::vector<Color> funcColors;
+    std::vector<float> floats; // used for ColorEdit3
+    double gamma = 2.2;
+
+    ColorState() {
+        palette = std::make_unique<Color[]>(numColors);
+    }
+
+    void add(Color color) { // appends for now
+        funcColors.push_back(color);
+        buildPalette();
+    }
+
+    void removeFunc(int index) {
+        funcColors.erase(funcColors.begin() + index);
+        buildPalette();
+
+        floats.erase(floats.begin() + 3*index, floats.begin() + 3*index+3);
+    }
+
+    void resizeVectors(int numTransforms) {
+        funcColors.resize(numTransforms);
+        floats.resize(numTransforms*3);
+    }
+
+    void clearPalette() {
+        for(int i = 0; i < numColors; i++) {
+            palette[i] = Color(); // set entire array to black
+        }
+    }
+
+    void randomizeColors(int numTransforms, int seed) {
+        std::uniform_real_distribution<double> satDist(0.7f, 1.0f);
+		std::uniform_real_distribution<double> valDist(0.7f, 1.0f);
+		std::mt19937 rng(seed); // pseudorandom -- good enough
+		funcColors.resize(numTransforms);
+		for(int i = 0; i < numTransforms; i++) {
+			double hue = (double)i / numTransforms; // evenly spaced hues [0, 1]
+			double saturation = satDist(rng);
+			double value = valDist(rng);
+			funcColors[i] = Color::hsvToRGB(hue, saturation, value);
+            printf("funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
+		}
+		buildPalette();
+    }
+
+    void buildPalette() {
+        clearPalette();
+        buildPalette(numColors);
+    }
+
+    void buildPalette(int numColors) {
+        palette = std::make_unique<Color[]>(numColors);
+        printf("There are %ld functions.\r\n", funcColors.size());
+        std::vector<Color> lerpColors;
+        
+        if(funcColors.size() == 0) {
+            lerpColors.push_back(Color());
+            lerpColors.push_back(Color(255, 255, 255));
+        } else if(funcColors.size() == 1) {
+            lerpColors.push_back(Color());
+            lerpColors.push_back(funcColors[0]);
+        } else { // size 2 or greater
+            lerpColors = funcColors;
+        }
+
+        for(int i = 0; i < numColors; i++) {
+            double t = (double)i / (numColors - 1); // t is the lerp amount
+            double segmentSize = 1.0 / (lerpColors.size() - 1); // size - 1 -> # of splits, all same size
+            size_t segment = static_cast<size_t>(t / segmentSize);
+            if(segment > lerpColors.size() - 2) {
+                segment = lerpColors.size() - 2;
+            }
+
+            double localT = (t - segment * segmentSize) / segmentSize; // now lerp within the segment
+            Color& a = lerpColors[segment]; // color to lerp from
+            Color& b = lerpColors[segment + 1]; // color to lerp to
+
+            palette[i].r = static_cast<uint8_t>(a.r + localT * (b.r - a.r));
+            palette[i].g = static_cast<uint8_t>(a.g + localT * (b.g - a.g));
+            palette[i].b = static_cast<uint8_t>(a.b + localT * (b.b - a.b));
+        }
+
+        printf("Palette made!\r\n");
+        
+        floats.resize(funcColors.size()*3);
+        for(size_t i = 0; i < funcColors.size(); i++) {
+            floats[3*i+0] = funcColors[i].r / 255.0; 
+            floats[3*i+1] = funcColors[i].g / 255.0;
+            floats[3*i+2] = funcColors[i].b / 255.0;
+        }
+        printf("Floats changed!\r\n");
+    }
+
+    const Color* getPalettePtr() {
+        return palette.get();
+    }
+
+    ~ColorState() {
+        clearPalette();
+    }
+    
+};
