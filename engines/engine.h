@@ -125,7 +125,7 @@ struct PixelData{
 	uint64_t hits = 0;
 	double color = 0;
 
-	bool operator<(const PixelData& other) {
+	bool operator<(const PixelData& other) const {
 		return hits < other.hits;
 	}
 };
@@ -177,8 +177,20 @@ class Histogram {
 			}
 		}
 
+		void merge(Histogram<PixelData>& other) {
+			for (int i = 0; i < width * height; i++) {
+				data[i].hits += other.data[i].hits;
+				data[i].color += other.data[i].color;
+    		}
+			other.clear();
+		}
+
+
 		Histogram(const Histogram&) = delete; // don't want or need copy constructor
 		Histogram& operator=(const Histogram&) = delete; // don't need assignment
+
+		Histogram(Histogram&&) = default; // move constructor
+		Histogram& operator=(Histogram&&) = default; // move assignment -- only for moving from an expiring Histogram to one that exists (for std::vector move)
 };
 
 struct Color { // pixel colors
@@ -239,6 +251,17 @@ struct Viewport {
 		minY = c;
 		maxY = d;
 	}
+
+	std::string formattedOutput;
+	const char* toString() {
+		std::stringstream stream;
+		stream << std::fixed << std::setprecision(3);
+		stream << "minX: " << minX << ", maxX: " << maxX << "\r\n";
+		stream << "minY: " << minY << ", maxY: " << maxY << "\r\n";
+
+		formattedOutput = stream.str();
+		return formattedOutput.c_str();
+	}
 };
 
 struct Camera {
@@ -288,7 +311,8 @@ struct EngineState {
 
 class Engine {
 	protected:
-		bool running = false;
+		uint64_t targetIterations = 100'000'000; // 100M iterations
+		std::atomic<bool> running = false;
 		Viewport viewport;
 		std::vector<Transform> transforms;
 		bool hasFinalTransform = false;
@@ -306,6 +330,16 @@ class Engine {
 			startTime = std::chrono::steady_clock::now();
 			startWallTime = std::chrono::system_clock::now();
     	}
+		
+		void recordEndTime() {
+			static int debugNumCalls = 0;
+            debugNumCalls += 1;
+
+			std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double> runLength = endTime - startTime;
+            printf("Stopping... (stop #%d)\r\n", debugNumCalls);
+            printf("Run length was %.2f seconds.\r\nThis is an average of %.1f iterations/sec.\r\n\r\n", runLength.count(), getTotalIterations() / runLength.count());
+		}
 		
 		void configChanged() {
 			globalHistogram.clear();
@@ -343,13 +377,27 @@ class Engine {
 		
 		virtual std::vector<VariationDef> getSupportedVariations() = 0;
 		
-		virtual void setup(int numThreads, uint64_t seed) = 0; // Spawn the thread, pause
+		virtual void setup(int numThreads) = 0; // Allocate memory for threads to access -- histograms and coordinates
 		virtual Coordinate getStartingCoordinate(int threadIndex) = 0;
 		virtual void start() = 0; // infinitely call step()
 		virtual void stop() = 0; // stop infinitely calling step()
 		virtual void reset() = 0; // go back to initial state -- empty histogram 
 		virtual uint64_t getTotalIterations() = 0;// used for data -- frontend reads it, and it's "accurate enough" even if it's slightly wrong
 		virtual uint64_t getMaxHits() = 0;
+		
+		bool done() {
+			return getTotalIterations() <= targetIterations;
+		}
+
+		int setThreads(int threadCount) {
+			if(threadCount < 1) return 1;
+			return std::min(threadCount, getMaxThreads());
+		}
+
+		
+		virtual int getMaxThreads() { 
+			return 1;
+		}
 
 		// not very organized: abstract class is below, this desperately needs a documentation pass
 		float getTotalWeight() {
@@ -660,7 +708,7 @@ inline void EngineState::applyPreset(std::unique_ptr<Engine>& fractal_engine) { 
 
 
 std::unique_ptr<Engine> createSerialEngine();
-std::unique_ptr<Engine> createOpenMPEngine(int threadCount);
+std::unique_ptr<Engine> createOpenMPEngine();
 
 #ifdef HAS_CUDA // My laptop does not have CUDA
 std::unique_ptr<Engine> createCUDAEngine();

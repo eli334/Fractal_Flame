@@ -1,0 +1,15 @@
+buildType:
+  default: Profiling
+  choices:
+    Debug:
+      short: Debug
+      buildType: Debug
+    Release:
+      short: Release
+      buildType: Release
+    Profiling:
+      short: Profiling
+      buildType: Profiling
+    Speed:
+      short: Speed
+      buildType: Speed

@@ -9,7 +9,9 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
-#include "./engines/engine.h" // Inherit the abstract class 
+// #include "./engines/engine.h" // Inherit the abstract class 
+// #include "./engines/serial_engine.cpp"
+#include "./engines/openmp_engine.cpp"
 
 // Fractal Flame frontend
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
@@ -42,15 +44,15 @@ struct UIState {
 
     void renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos);
 
+    void renderPresetsWindow(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
+
     void renderPlayPaused(std::unique_ptr<Engine> &fractal_engine);
 
-    void renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine);
+    void renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine, ImVec2 buttonPos);
 
     bool renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture);
 
     bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine);
-
-    void renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
     
     void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
 
@@ -72,15 +74,14 @@ struct UIState {
 
 };  
 
-std::unique_ptr<Engine> selectBackend(int selection, int /*threadCount*/) {
+std::unique_ptr<Engine> selectBackend(int selection) {
     switch(selection) {
-        case 1: // Serial
-            return std::unique_ptr<Engine>(createSerialEngine());
-            break;
-        case 2: // OpenMP
-            //return std::unique_ptr<Engine>(createOpenMPEngine(config, threadCount));
-            return nullptr;
-            break;
+        case 1: { // Serial
+            return std::make_unique<Serial_Engine>();
+        }
+        case 2: { // OpenMP
+            return std::make_unique<OpenMP_Engine>(omp_get_num_procs());
+        }
         //case 3: // CUDA
         default: // None
             return nullptr;
@@ -124,7 +125,7 @@ std::vector<Preset> presets = {DragonCurve}; // https://paulbourke.net/fractals/
 int main() { 
     UIState ui;
     
-    constexpr bool OpenGLDebug = true;
+    constexpr bool OpenGLDebug = false;
 
 
     if (!glfwInit()) {
@@ -142,7 +143,10 @@ int main() {
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
     const GLFWvidmode* mode = glfwGetVideoMode(monitor);
 
-    printf("bits: \r\nred: %d, green: %d, blue: %d", mode->redBits, mode->greenBits, mode->blueBits);
+    if constexpr (OpenGLDebug) {
+        printf("bits: \r\nred: %d, green: %d, blue: %d\r\n", mode->redBits, mode->greenBits, mode->blueBits);    
+    }
+    
 
     int centerX = (mode->width - ui.window_width) / 2;
     int centerY = (mode->height - ui.window_height) / 2;
@@ -163,9 +167,13 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // https://registry.khronos.org/OpenGL-Refpages/gl4/html/glTexParameter.xhtml
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    std::vector<uint8_t> blackPixels(1000 * 1000 * 4, 0);
+    for(size_t i = 3; i < blackPixels.size(); i += 4) {
+        blackPixels[i] = 255;
+    }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                 1000, 1000,
-                0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                0, GL_RGBA, GL_UNSIGNED_BYTE, blackPixels.data());
     glBindTexture(GL_TEXTURE_2D, 0);
 
     if constexpr (OpenGLDebug) {
@@ -180,7 +188,7 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
     
-    std::unique_ptr<Engine> fractal_engine = selectBackend(1, 1);
+    std::unique_ptr<Engine> fractal_engine = selectBackend(1);
 
     std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
     ui.supportedVariations.resize(vars.size());
@@ -216,11 +224,44 @@ int main() {
         ImGui::Begin("##flameview", nullptr, ui.flame_flags);
         ImGui::Image((ImTextureID)(intptr_t)flameTexture, display);
 
+
+        auto toScreen = [&](double fractalX, double fractalY, Viewport &vp) -> ImVec2 {
+            // fractal coords -> normalized histogram coords [0,1]
+            double histoX = (fractalX - vp.minX) / (vp.maxX - vp.minX);
+            double histoY = 1.0 - (fractalY - vp.minY) / (vp.maxY - vp.minY); // Y flip
+            
+            // normalized histogram coords -> screen coords (inverse of fillPixelBuffer)
+            double normalizedX = (histoX - ui.view.centerX) * ui.view.zoom + 0.5;
+            double normalizedY = (histoY - ui.view.centerY) * ui.view.zoom + 0.5;
+            
+            return { (float)(normalizedX * display.x), (float)(normalizedY * display.y) };
+        };
+
+
+        if(fractal_engine) {
+            Viewport vp = fractal_engine->getViewport();
+            // printf("Viewport:\r\n%s", vp.toString());
+            // printf("centerX: %.2f, centerY: %.2f, zoom: %.2f\r\n", ui.view.centerX, ui.view.centerY, ui.view.zoom);
+            ImVec2 topLeft     = toScreen(vp.minX, vp.minY, vp);
+            ImVec2 bottomRight = toScreen(vp.maxX, vp.maxY, vp);
+
+            ImU32 borderColor;
+            if(fractal_engine->done()) {
+                borderColor = IM_COL32(0, 255, 0, 255);
+            } else {
+                borderColor = IM_COL32(255, 255, 255, 255);
+            }
+
+            ImGui::GetWindowDrawList()->AddRect(topLeft, bottomRight, borderColor, 0.0f, 0, 1.0f);
+            // ImGui::GetWindowDrawList()->AddCircle(toScreen(0, 0, vp), 5.0f, IM_COL32(255, 0, 255, 255));
+        }
+        
+
         if(ImGui::IsItemHovered()) {
             if(ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 ImVec2 delta = ImGui::GetIO().MouseDelta;
-                ui.view.centerX -= delta.x / display.x;
-                ui.view.centerY -= delta.y / display.y;
+                ui.view.centerX -= (delta.x / display.x) / ui.view.zoom;
+                ui.view.centerY -= (delta.y / display.y) / ui.view.zoom;
             }
 
             float wheel = ImGui::GetIO().MouseWheel;
@@ -228,8 +269,8 @@ int main() {
                 ui.view.zoom *= (1.0 + wheel * 0.1);
             }
         }
-
-
+        
+    
         ImGui::End();
         ImGui::PopStyleVar();
 
@@ -243,13 +284,12 @@ int main() {
             }
             
 
-            ImGui::SetNextWindowPos({10, display.y - 80}, ImGuiCond_Always);
-            ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
-            
-            ui.renderRandomizeButton(fractal_engine);
 
             
+            ui.renderRandomizeButton(fractal_engine, {10, display.y - 80});
+
             ui.renderQuickEdit(fractal_engine, ui, {60, display.y - 80});
+            
 
 
             ImGui::SetNextWindowPos({10, display.y - 40}, ImGuiCond_Always); // settings positioning
@@ -287,7 +327,7 @@ int main() {
             
             ImGui::SetNextItemWidth(100); // 100 px
             if(ImGui::Combo("##backendSelector", &selectedBackend, backends, IM_ARRAYSIZE(backends))) {
-                fractal_engine = selectBackend(selectedBackend, ui.threadCount);
+                fractal_engine = selectBackend(selectedBackend);
                 if(selectedBackend == 0) { // None
                     ui.supportedVariations = {};
                 } else {
@@ -311,7 +351,6 @@ int main() {
                 ui.renderUITab(fractal_engine, flameTexture);
                 
                 if(fractal_engine && !(fractal_engine->getStatus())) {
-                    ui.renderPresetsTab(fractal_engine, presets);
                     ui.renderRandomTab(fractal_engine);
                 } 
 
@@ -360,9 +399,9 @@ void uploadHistogram(std::unique_ptr<Engine> &fractal_engine, UIState &ui, doubl
     int height = fractal_engine->getHistogram()->getHeight();
     pixels.resize(width * height * 4);
     if(fractal_engine->fillPixelBuffer(pixels.data(), ui.color.palette.get(), ui.color.numColors, gamma, ui.view)) { // if the pixel buffer was updated, reupload bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma)
-        ImVec2 imageMin = ImGui::GetItemRectMin();
-        ImVec2 imageMax = ImGui::GetItemRectMax();
-        ImGui::GetWindowDrawList()->AddRect(imageMin, imageMax, IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f); // 1 px white rectangle around image
+        // ImVec2 imageMin = ImGui::GetItemRectMin();
+        // ImVec2 imageMax = ImGui::GetItemRectMax();
+        // ImGui::GetWindowDrawList()->AddRect(imageMin, imageMax, IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f); // 1 px white rectangle around image
         glBindTexture(GL_TEXTURE_2D, flameTexture);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                         GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
@@ -455,7 +494,7 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
     if(!fractal_engine) return; // guard against fractal_engine not existing
 
     if(!quickEditOpen) {
-        ImGui::SetNextWindowPos({buttonPos.x, buttonPos.y}, ImGuiCond_Always); // quickEdit positioning
+        ImGui::SetNextWindowPos(buttonPos, ImGuiCond_Always); // quickEdit positioning
         ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
         ImGui::Begin("##QEButton", nullptr, button_flags);
         if(ImGui::Button("[Q]")) { 
@@ -463,7 +502,7 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
         }
         ImGui::End();
     } else  {
-        ImGui::SetNextWindowPos({60, 80}, ImGuiCond_Appearing); // quickEdit positioning
+        ImGui::SetNextWindowPos({600, 80}, ImGuiCond_Appearing); // quickEdit positioning
         ImGui::SetNextWindowSize({300, 200}, ImGuiCond_Appearing);
         ImGui::Begin("Quick Edit", &quickEditOpen);
         float gammaSlider = (float) color.gamma;
@@ -474,17 +513,20 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
         double minPanX = 0.0, maxPanX = 1.0;
         double minPanY = 0.0, maxPanY = 1.0;
         double minZoom = 0.1, maxZoom = 10.0;
-        if(ImGui::SliderScalar("CameraX", ImGuiDataType_Double, &ui.view.centerX, &minPanX, &maxPanX, "%.2f")) {
-            // technically I shouldn't need to do anything
+        ImGui::SliderScalar("CameraX", ImGuiDataType_Double, &ui.view.centerX, &minPanX, &maxPanX, "%.2f");
+
+        ImGui::SliderScalar("CameraY", ImGuiDataType_Double, &ui.view.centerY, &minPanY, &maxPanY, "%.2f");
+        
+        ImGui::SliderScalar("Zoom", ImGuiDataType_Double, &ui.view.zoom, &minZoom, &maxZoom, "%.1f");
+
+        if(fractal_engine->getMaxThreads() != 1) {
+            ImGui::SliderInt("Thread Count", &ui.threadCount, 1, fractal_engine->getMaxThreads());
+
+            if (ImGui::IsItemDeactivatedAfterEdit()) {
+                fractal_engine->setThreads(ui.threadCount);
+            }
         }
 
-        if(ImGui::SliderScalar("CameraY", ImGuiDataType_Double, &ui.view.centerY, &minPanY, &maxPanY, "%.2f")) {
-            // technically I shouldn't need to do anything
-        }
-        
-        if(ImGui::SliderScalar("Zoom", ImGuiDataType_Double, &ui.view.zoom, &minZoom, &maxZoom, "%.1f")) {
-            // technically I shouldn't need to do anything
-        }
 
         
 
@@ -514,12 +556,13 @@ void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
     ImGui::End();
 }
 
-void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine) {
+void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine, ImVec2 buttonPos) {
     // if(fractal_engine && fractal_engine->getStatus()) {
     //     ImGui::BeginDisabled();
     // }
 
-    
+    ImGui::SetNextWindowPos(buttonPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({50, 40}, ImGuiCond_Always);
 
     ImGui::Begin("##randomizeButton", nullptr, button_flags);
     if(ImGui::Button("[R]")) {
@@ -731,7 +774,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine) {
     }
 }
 
-void UIState::renderPresetsTab(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets) {
+void UIState::renderPresetsWindow(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets) {
     if(ImGui::BeginTabItem("Presets")) {
         size_t numPresets = presets.size();
 

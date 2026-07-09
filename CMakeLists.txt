@@ -6,20 +6,53 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# --- Compiler flags ---
-if(MSVC)
-    # If you ever use Windows/MSVC, these are the equivalent flags
-    add_compile_options(/W4 /WX) 
-else()
-    # Debug build flags
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -fsanitize=address,undefined -Wall -Wextra -pg")
-    
-    # Release build flags
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto")
+set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type")
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+    Debug Release RelWithDebInfo MinSizeRel Profiling Speed)
 
-    # Ultra speed flags
-    set(CMAKE_CXX_FLAGS_SPEED "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto")
-endif()
+# --- Compiler flags ---
+
+# Profiling flags
+set(CMAKE_CXX_FLAGS_PROFILING "${CMAKE_CXX_FLAGS_PROFILING} -O2 -Wall -pg")
+
+# Debug build flags
+
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Og -fsanitize=address,undefined -Wall -Wextra")
+
+# Release build flags
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto=auto")
+
+# Ultra speed flags
+set(CMAKE_CXX_FLAGS_SPEED "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto=auto")
+
+## Emscripten is a WASM compiler -- I want to get this working in-browser.
+## link (if it's working) is https://fractal.emahizer.net
+##
+## This branch is deliberately kept separate from (and much smaller than) the
+## native build below: no GLFW/GLAD/ImGui/OpenMP/CUDA, since the web target
+## renders straight to a <canvas> 2D context via JS glue (see web/web_main.cpp)
+## and runs single-threaded (see engines/web_engine.cpp -- Web_Engine extends
+## Engine directly, not Serial_Engine, specifically so nothing here needs
+## std::thread / -pthread / SharedArrayBuffer / COOP+COEP headers).
+
+if(EMSCRIPTEN)
+    add_executable(flame_web web/web_main.cpp)
+    target_link_options(flame_web PRIVATE
+        # -sALLOW_MEMORY_GROWTH=1 # this breaks the randomization 
+        -sINITIAL_MEMORY=268435456
+        --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html
+    )
+    set_target_properties(flame_web PROPERTIES SUFFIX ".html")
+
+else() 
+
+# Native build (GLFW/OpenGL/ImGui + Serial/OpenMP/CUDA engines).
+# Unchanged from before, just now explicitly skipped for Emscripten
+# configures -- OpenMP and GLFW's own CMake don't need to be touched
+# (or FetchContent-ed) at all for the web target.
+       
+# I have a Github Action to update https://fractal.emahizer.net when I run the action.
+
 
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
@@ -132,6 +165,9 @@ target_link_libraries(fractal_flame PRIVATE
     glad
     ${CMAKE_DL_LIBS} # Required for GLAD to interact with GPU drivers
 )
+
+endif() # EMSCRIPTEN
+
 
 
 

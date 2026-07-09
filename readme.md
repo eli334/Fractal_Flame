@@ -44,7 +44,7 @@ $ make
 
 ## Roadmap
 
-- 1.1 - Naive threading
+- 1.1 - Visual Improvements
 - 1.2 - OpenMP
 - 1.3 - CUDA
 - 1.4 - MPI

@@ -1,0 +1,23 @@
+name: Build and Deploy Web
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'engines/**'
+      - 'CMakeLists.txt'
+jobs:
+  build-deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure and build (Emscripten)
+        run: |
+          source ~/docker/development/flame/emsdk/emsdk_env.sh
+          emcmake cmake -B build-web
+          cmake --build build-web --target flame_web
+      - name: Deploy to SWAG
+        run: |
+          cp build-web/flame_web.html ~/docker/development/flame/www/index.html
+          cp build-web/flame_web.js ~/docker/development/flame/www/
+          cp build-web/flame_web.wasm ~/docker/development/flame/www/

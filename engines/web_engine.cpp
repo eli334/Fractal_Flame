@@ -1,146 +1,149 @@
 #include "./engine.h"
 
-/* Calculation code:
-    Coordinate variation(Coordinate c) {} - same header for each -> [(x, y) -> (x, y)]
-    other variables:
-    r = sqrt(x^2 + y^2) -- r^2 = x^2 + y^2 -- std::hypot() because this is a hypotenuse
-    theta = arctan(x / y)
-    phi = arctan(y / x)
-*/
+// Web_Engine -- single-threaded backend for the Emscripten/WASM build.
+//
+// Extends Engine directly (not Serial_Engine) so this file has zero dependency
+// on <thread>/std::thread. Serial_Engine declares a std::thread workingThread
+// member and spawns it in start(); pulling that in here would tie the whole
+// web build to Emscripten's pthread mode (-pthread, SharedArrayBuffer, COOP/COEP
+// headers) for no benefit, since the browser's own main-loop callback already
+// *is* our loop driver. Web_Engine plays that role with runBatch() instead of
+// a worker thread: web_main.cpp calls runBatch(n) once per animation frame.
+//
+// The per-step math (pickFunction/calculate/calculateFinalTransform, and the
+// getSupportedVariations list) below is copied verbatim from Serial_Engine,
+// since none of it is thread-related -- it's the same 49-variation dispatch
+// either way.
 
-
-// engine code
-
-class Serial_Engine : public Engine {
+class Web_Engine : public Engine {
     protected:
-        std::vector<uint64_t> iterationCounters;
-        std::vector<std::unique_ptr<Xorshift64>> rngs; 
-        std::thread workingThread;
-        std::vector<Histogram<PixelData>> localHistograms;
-        int numThreads = 1; // desired threads
+        std::unique_ptr<Xorshift64> rng;
+        uint64_t iterationCounter = 0;
+        bool warmedUp = false; // tracks whether the 20-iteration chaos-game warmup (see runBatch) has run yet
 
     public:
-        Serial_Engine() : Engine() {
-            setup();
-        };
+        Web_Engine() : Engine() {
+            setup(1);
+        }
 
-        // randomly get an x, y, and color coordinate
-        Coordinate getStartingCoordinate(int threadIndex) {
-            double x = 1 - 2 *  rngs[threadIndex]->getDouble();
-            double y = 1 - 2 *  rngs[threadIndex]->getDouble();
-            double color = rngs[threadIndex]->getDouble();
+        // randomly get an x, y, and color coordinate -- mirrors Serial_Engine,
+        // but reads the single member rng directly since Web_Engine never has
+        // more than one "thread" (threadIndex is accepted only to satisfy the
+        // Engine interface / getCurrent()).
+        Coordinate getStartingCoordinate(int threadIndex) override {
+            (void)threadIndex;
+            double x = 1 - 2 * rng->getDouble();
+            double y = 1 - 2 * rng->getDouble();
+            double color = rng->getDouble();
             return {x, y, color};
         }
 
-        // get the total number of iterations from all threads
-        uint64_t getTotalIterations() {
-            uint64_t totalIterations = 0;
-            for(size_t i = 0; i < iterationCounters.size(); i++) {
-                totalIterations += iterationCounters[i];
-            }
-            return totalIterations;
+        uint64_t getTotalIterations() override {
+            return iterationCounter;
         }
 
         // get value of hottest histogram bin
-        uint64_t getMaxHits() {
-            // for(size_t i = 0; i < iterationCounters.size(); i++) {
-            //     if(maxIterations < iterationCounters[i]) {
-            //         maxIterations = iterationCounters[i];
-            //     }
-            // }
-            if(iterationCounters.empty()) return 0;
-            PixelData maxHistogramBin = *std::max_element(globalHistogram.data.begin(), globalHistogram.data.end());  
+        uint64_t getMaxHits() override {
+            if (globalHistogram.data.empty()) return 0;
+            PixelData maxHistogramBin = *std::max_element(globalHistogram.data.begin(), globalHistogram.data.end());
             return maxHistogramBin.hits;
         }
 
-
-        void setup(int numThreads = 1) {
+        // numThreads is accepted (to satisfy Engine's pure virtual signature)
+        // but ignored -- Web_Engine is always single-threaded.
+        void setup(int numThreads = 1) override {
+            (void)numThreads;
             std::random_device slowRNG;
             uint64_t seed = ((uint64_t)slowRNG() << 32) | slowRNG(); // random 64 bit number
-            
-            rngs.clear();
-            rngs.reserve(numThreads);
-            threadCoords.resize(numThreads);
-            for(uint64_t i = 0; i < (uint64_t) numThreads; i++) {
-                rngs.emplace_back(std::make_unique<Xorshift64>(seed ^ (i * 2654435761ULL))); // Knuth multiplicative constant (2^32 * the golden ratio)
-                threadCoords[i] = getStartingCoordinate(i);
-            }
-            
-            localHistograms.resize(numThreads);
-            iterationCounters.clear();
-            iterationCounters.resize(numThreads);
-            this->numThreads = numThreads;
-            // setSeed(seed);
+
+            rng = std::make_unique<Xorshift64>(seed);
+            threadCoords.resize(1);
+            threadCoords[0] = getStartingCoordinate(0);
+            iterationCounter = 0;
         }
 
-        void start() {
-            recordStartTime(); // for logging for data -- I plan on lots of data collection
+        // No thread to spawn -- this just arms runBatch(). web_main.cpp's
+        // emscripten_set_main_loop_arg callback is the actual loop driver.
+        void start() override {
+            recordStartTime();
             running = true;
-            printf("Spawning worker...\r\n");
-            workingThread = std::thread(&Serial_Engine::workerLoop, this);
-            printf("Thread spawned -- running = %d\r\n", (bool) running);
         }
 
-        void stop() {
+        void stop() override {
             running = false;
-            if(workingThread.joinable()) {
-                printf("Joining working thread.\r\n");
-                workingThread.join();
-                printf("workingThread is no longer joinable.\r\n");
-            }
             recordEndTime();
         }
 
-        void reset() { // called when setTransforms is reset
-            printf("Resetting!\r\n");
-            if(running) {
-                stop();
-            }
-            
+        void reset() override {
+            if (running) stop();
         }
-        
-        Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) {
+
+        Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) override {
             int func = pickFunction(rng);
 
-            if(func < 0) { // there are no transforms selected but the user pressed > -- do nothing
+            if (func < 0) { // no transforms selected -- do nothing
                 return c;
             }
 
             c = calculate(func, c, rng);
 
-            if(!std::isfinite(c.x) || !std::isfinite(c.y)) {
-                c = {1 - 2 * rng.getDouble(),  1 - 2 * rng.getDouble(), rng.getDouble()}; // reset to a known good point
+            if (!std::isfinite(c.x) || !std::isfinite(c.y)) {
+                c = {1 - 2 * rng.getDouble(), 1 - 2 * rng.getDouble(), rng.getDouble()}; // reset to a known good point
             }
 
-            if(hasFinalTransform) {
+            if (hasFinalTransform) {
                 c = calculateFinalTransform(c, rng);
 
-                if(!std::isfinite(c.x) || !std::isfinite(c.y)) {
-                    c = {1 - 2 * rng.getDouble(),  1 - 2 * rng.getDouble(), rng.getDouble()}; // reset to a known good point
-                }   
+                if (!std::isfinite(c.x) || !std::isfinite(c.y)) {
+                    c = {1 - 2 * rng.getDouble(), 1 - 2 * rng.getDouble(), rng.getDouble()};
+                }
             }
 
             return c;
-        };
+        }
 
-        virtual void step(Coordinate c, int threadIndex, Xorshift64 &rng) {
+        void step(Coordinate c, int threadIndex, Xorshift64 &rng) override {
             threadCoords[threadIndex] = stepNoPlot(c, rng);
-            plot(threadCoords[threadIndex]); // plots the current point if within histogram
-        };
+            plot(threadCoords[threadIndex]);
+        }
 
         void plot(Coordinate pointToPlot) {
             int plotX = (int)((pointToPlot.x - viewport.minX) / (viewport.maxX - viewport.minX) * globalHistogram.width);
             int plotY = (int)((1 - (pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY)) * globalHistogram.height);
-            
-            if(plotX >= 0 && plotX < globalHistogram.width && // if within bounds of histogram:
-               plotY >= 0 && plotY < globalHistogram.height) {
+
+            if (plotX >= 0 && plotX < globalHistogram.width &&
+                plotY >= 0 && plotY < globalHistogram.height) {
                 int index = plotY * globalHistogram.width + plotX;
                 globalHistogram.data[index].hits++;
                 globalHistogram.data[index].color += pointToPlot.color;
             }
         }
 
-        std::vector<VariationDef> getSupportedVariations() { // updated by me, per engine, for frontend purposes
+        // Web-specific: run n iterations synchronously. Called once per browser
+        // animation frame from web_main.cpp, sized adaptively to hit a ~16ms
+        // frame budget. This fills the role Serial_Engine's workerLoop() plays
+        // natively, minus the thread and the 20-iteration warmup (the warmup
+        // matters for a fresh chaos-game point converging onto the attractor;
+        // since Web_Engine's starting coordinate is only computed once in
+        // setup(), not per-batch, we do that warmup once here instead).
+        void runBatch(uint64_t n) {
+            if (!running) return;
+
+            if (!warmedUp) {
+                for (int i = 0; i < 20; i++) {
+                    threadCoords[0] = stepNoPlot(threadCoords[0], *rng);
+                    iterationCounter++;
+                }
+                warmedUp = true;
+            }
+
+            for (uint64_t i = 0; i < n; i++) {
+                step(threadCoords[0], 0, *rng);
+                iterationCounter++;
+            }
+        }
+
+        std::vector<VariationDef> getSupportedVariations() override { // updated by me, per engine, for frontend purposes
             static std::vector<VariationDef> supportedVariations = { // static for c_str()
                 {0, "Identity"}, // called Linear in paper, but Identity makes more sense
                 {1, "Sinusoidal"},
@@ -383,22 +386,4 @@ class Serial_Engine : public Engine {
             affine.color = (coord.color + t.color) / 2.0;
             return affine;
         }
-        
-        void workerLoop() {
-            // serial engine
-            int threadIndex = 0; // will be obtained programatically from OpenMP or CUDA
-            Coordinate* currentThreadCoordinate = &threadCoords[threadIndex];
-            printf("Worker loop started.\r\n");
-            for(int i = 0; i < 20; i++) {
-                *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate, *rngs[threadIndex]);
-                iterationCounters[threadIndex]++;
-            }
-
-            while(running) {
-                this->step(*currentThreadCoordinate, threadIndex, *rngs[threadIndex]);
-                iterationCounters[threadIndex]++;
-            }
-            printf("Worker loop ended.\r\n");
-        }
 };
-
