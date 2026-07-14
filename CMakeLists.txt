@@ -16,11 +16,10 @@ set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
 set(CMAKE_CXX_FLAGS_PROFILING "${CMAKE_CXX_FLAGS_PROFILING} -O2 -Wall -pg")
 
 # Debug build flags
-
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Og -fsanitize=address,undefined -Wall -Wextra")
 
 # Release build flags
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto=auto")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto=auto -fno-omit-frame-pointer" )
 
 # Ultra speed flags
 set(CMAKE_CXX_FLAGS_SPEED "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto=auto")
@@ -135,6 +134,20 @@ endif()
 add_executable(fractal_flame 
     ./fractal_flame_frontend.cpp    
 )
+
+add_executable(benchmark
+    ./benchmark.cpp
+)
+
+target_link_libraries(benchmark PRIVATE
+    $<TARGET_OBJECTS:serial_engine>
+    $<TARGET_OBJECTS:openmp_engine>
+    OpenMP::OpenMP_CXX
+)
+
+target_compile_options(benchmark PRIVATE ${OpenMP_CXX_FLAGS})
+
+
 
 target_link_libraries(fractal_flame PRIVATE
     $<TARGET_OBJECTS:serial_engine>

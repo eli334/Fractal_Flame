@@ -55,6 +55,7 @@ class Serial_Engine : public Engine {
 
 
         void setup(int numThreads = 1) {
+            printf("setup(%d) called, setting this->numThreads = %d\r\n", numThreads, numThreads);
             std::random_device slowRNG;
             uint64_t seed = ((uint64_t)slowRNG() << 32) | slowRNG(); // random 64 bit number
             
@@ -389,6 +390,8 @@ class Serial_Engine : public Engine {
             int threadIndex = 0; // will be obtained programatically from OpenMP or CUDA
             Coordinate* currentThreadCoordinate = &threadCoords[threadIndex];
             printf("Worker loop started.\r\n");
+            // iterationCounters.clear(); // clear sets size to 0
+            std::fill(iterationCounters.begin(), iterationCounters.end(), 0); 
             for(int i = 0; i < 20; i++) {
                 *currentThreadCoordinate = stepNoPlot(*currentThreadCoordinate, *rngs[threadIndex]);
                 iterationCounters[threadIndex]++;

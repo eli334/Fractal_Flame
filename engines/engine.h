@@ -136,7 +136,7 @@ class Histogram {
 		int width = 1000, height = 1000;
 		std::vector<T> data;
 
-		T operator[](int index) {
+		T operator[](int index) const {
 			return data[index];
 		}
 
@@ -150,6 +150,10 @@ class Histogram {
 
 		int getHeight() const {
 			return height;
+		}
+
+		size_t getSize() const {
+			return width * height;
 		}
 
 		void clear() {
@@ -251,6 +255,19 @@ struct Viewport {
 		minY = c;
 		maxY = d;
 	}
+	Viewport(float minX, float maxX, float minY, float maxY) {
+		double realMinX = std::min(minX, maxX);
+		double realMaxX = std::max(minX, maxX);
+
+		double realMinY = std::min(minY, maxY);
+		double realMaxY = std::max(minY, maxY);
+		
+		this->minX = realMinX;
+		this->maxX = realMaxX;
+		this->minY = realMinY;
+		this->maxY = realMaxY;
+		printf("Viewport float-constructed:\r\n%s", toString());
+	}
 
 	std::string formattedOutput;
 	const char* toString() {
@@ -343,6 +360,7 @@ class Engine {
 		
 		void configChanged() {
 			globalHistogram.clear();
+
 			calculateWeight();
 			recalculateColors();
 		}
@@ -370,6 +388,8 @@ class Engine {
 				this->transforms[i].color = (float)i / (this->transforms.size() - 1); 
 			}
 		}
+	
+	
 	public:
 		virtual void step(Coordinate c, int threadIndex, Xorshift64 &rng) = 0; // iterate coordinate once   
 		virtual Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) = 0;
@@ -386,15 +406,30 @@ class Engine {
 		virtual uint64_t getMaxHits() = 0;
 		
 		bool done() {
-			return getTotalIterations() <= targetIterations;
+			return getTotalIterations() >= targetIterations;
 		}
 
-		int setThreads(int threadCount) {
-			if(threadCount < 1) return 1;
-			return std::min(threadCount, getMaxThreads());
+		void setTargetIterations(uint64_t iterations) {
+			targetIterations = iterations;
 		}
 
-		
+		virtual int setThreads(int desiredThreadCount) {
+			printf("setThreads called with %d\r\n", desiredThreadCount);
+			if(desiredThreadCount <= getMaxThreads() && desiredThreadCount > 0) {
+				if(running) {
+					stop();
+					setup(desiredThreadCount);
+					start();
+				} else {
+					setup(desiredThreadCount);
+				}
+				return desiredThreadCount;            
+			} else {
+				return setThreads(1);
+			}
+		}
+
+
 		virtual int getMaxThreads() { 
 			return 1;
 		}
@@ -402,6 +437,10 @@ class Engine {
 		// not very organized: abstract class is below, this desperately needs a documentation pass
 		float getTotalWeight() {
 			return totalWeight;
+		}
+
+		const Histogram<PixelData>& getHistogram() {
+			return globalHistogram;
 		}
 
 		std::vector<Transform> getTransforms() {
@@ -461,10 +500,6 @@ class Engine {
 			size_t correctIndexType = (size_t) index; // oh, C++
 			if(correctIndexType > threadCoords.size()) return Coordinate(); // if OOB, just return (0, 0) - i don't even use getCurrent
 			return threadCoords[correctIndexType];
-		}
-
-		const Histogram<PixelData>* getHistogram() { // const makes this read-only
-			return &globalHistogram;
 		}
 
 		void resize(int width, int height) {

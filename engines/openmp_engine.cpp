@@ -22,13 +22,13 @@ class OpenMP_Engine : public Serial_Engine {
 
         void stepThread(int threadIndex) {
             threadCoords[threadIndex] = stepNoPlot(threadCoords[threadIndex], *rngs[threadIndex]);
-            local_plot(threadIndex, threadCoords[threadIndex]); // plots the current point if within histogram
+            localPlot(threadIndex, threadCoords[threadIndex]); // plots the current point if within histogram
             iterationCounters[threadIndex]++;
         };
 
-        void local_plot(int threadIndex, Coordinate pointToPlot) {
+        void localPlot(int threadIndex, Coordinate pointToPlot) {
             int plotX = (int)((pointToPlot.x - viewport.minX) / (viewport.maxX - viewport.minX) * globalHistogram.width);
-            int plotY = (int)((pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY) * globalHistogram.height);
+            int plotY = (int)((1.0 - (pointToPlot.y - viewport.minY) / (viewport.maxY - viewport.minY)) * globalHistogram.height);
             
             if(plotX >= 0 && plotX < globalHistogram.width && // if within bounds of histogram:
                 plotY >= 0 && plotY < globalHistogram.height) {
@@ -38,8 +38,9 @@ class OpenMP_Engine : public Serial_Engine {
             }
         }
 
-        int setThreads(int desiredThreadCount) {
-            if(desiredThreadCount < getMaxThreads() && desiredThreadCount > 0) {
+        int setThreads(int desiredThreadCount) override  {
+            printf("setThreads called with %d\r\n", desiredThreadCount);
+            if(desiredThreadCount <= getMaxThreads() && desiredThreadCount > 0) {
                 if(running) {
                     stop();
                     setup(desiredThreadCount);
@@ -55,23 +56,30 @@ class OpenMP_Engine : public Serial_Engine {
 
         void workerLoop(int numThreads) {
             printf("%d threads spawning.\r\n", numThreads);
-            setup(numThreads);
-            static constexpr int batch_size = 1'000'000;
+            globalHistogram.clear();
+            for(Histogram<PixelData>& hist : localHistograms) {
+                hist.clear();
+            }
+
+            static constexpr int batch_size = 10'000'000;
             
             #pragma omp parallel num_threads(numThreads) 
             {
                 int id = omp_get_thread_num();
-                printf("Thread %d/%d reporting for duty!\r\n", id, omp_get_max_threads());
+                printf("Thread %d/%d reporting for duty!\r\n", id, numThreads);
                 
                 while(running) {    
                     #pragma omp for schedule(static) nowait
                     for(int i = 0; i < batch_size; i++) {
+                        // if(!running) break; // early exit if stopped // this is not allowed in OpenMP for loops...
                         stepThread(id);
                     }
-
-                    #pragma omp critical
-                    globalHistogram.merge(localHistograms[id]);
+                    // moved merge to after running -- it will 
+                    
                 }
+                #pragma omp critical
+                globalHistogram.merge(localHistograms[id]);
+
                 #pragma omp barrier
                 if(!running) {
                     printf("Thread %d exiting!\r\n", id);

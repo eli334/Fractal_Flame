@@ -17,7 +17,7 @@
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 
 struct UIState {
-    int selectedBackend = 1; // defaults to Serial when opening window for now
+    int selectedBackend = 2; // defaults to OpenMP when opening window for now
     float settingsPanelAlpha = 0.97f;
     float settingsPanelWidth = 0.20f; // 20% of screen width
     uint16_t window_width = 1280, window_height = 720;
@@ -70,17 +70,56 @@ struct UIState {
         | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoBackground
         | ImGuiWindowFlags_NoNav;
 
+    ImVec2 toFractal(ImVec2 screen, Viewport &vp, ImVec2 display) {
+        double normalizedX = screen.x / display.x;
+        double normalizedY = screen.y / display.y;
+        double histoX = (normalizedX - 0.5) / view.zoom + view.centerX;
+        double histoY = (normalizedY - 0.5) / view.zoom + view.centerY;
+        double fractalX = histoX * (vp.maxX - vp.minX) + vp.minX;
+        double fractalY = (1.0 - histoY) * (vp.maxY - vp.minY) + vp.minY;
+        return {(float) fractalX, (float) fractalY};
+    }
 
-
+    void addDashedRect(ImVec2 topLeft, ImVec2 bottomRight, ImU32 color, float dashLength) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 corners[4] = {
+            topLeft,
+            {bottomRight.x, topLeft.y},
+            bottomRight,
+            {topLeft.x, bottomRight.y}
+        };
+        for(int i = 0; i < 4; i++) {
+            ImVec2 start = corners[i];
+            ImVec2 end = corners[(i + 1) % 4];
+            float width = end.x - start.x;
+            float height = end.y - start.y;
+            float length = sqrtf(width*width + height*height);
+            float unitX = width / length;
+            float unitY = height / length;
+            float pos = 0;
+            bool draw = true;
+            while(pos < length) {
+                float segEnd = std::min(pos + dashLength, length);
+                if(draw) {
+                    drawList->AddLine(
+                        {start.x + unitX*pos, start.y + unitY*pos},
+                        {start.x + unitX*segEnd, start.y + unitY*segEnd},
+                        color, 1.0f);
+                }
+                pos = segEnd;
+                draw = !draw;
+            }
+        }
+    }
 };  
 
-std::unique_ptr<Engine> selectBackend(int selection) {
+std::unique_ptr<Engine> selectBackend(int selection, int numThreads = std::max(1, omp_get_num_procs() - 8)) {
     switch(selection) {
         case 1: { // Serial
             return std::make_unique<Serial_Engine>();
         }
         case 2: { // OpenMP
-            return std::make_unique<OpenMP_Engine>(omp_get_num_procs());
+            return std::make_unique<OpenMP_Engine>(numThreads);
         }
         //case 3: // CUDA
         default: // None
@@ -103,24 +142,24 @@ struct Preset {
     }
 };
 
-const Preset DragonCurve = {
-    "Dragon Curve",
-    {
-    0,                  // seed
-    {-10, 10, -10, 10}, // viewport
-    { 
-        Transform{4, 0, VariationDef(), Affine(0.824074, 0.281428, -1.88229, -0.212346, 0.864198, -0.110607), Parametric()}, 
-        Transform{1, 1, VariationDef(), Affine(0.088272, 0.520988, 0.785360, -0.463889, -0.377778, 8.095795), Parametric()}
-    },
-    false, // hasFinalTransform
-    Transform()
-    },
-    {
-        {255, 0, 0}, {0, 0, 255} // two colors, one for each Transform above
-    }
-};
+// const Preset DragonCurve = {
+//     "Dragon Curve",
+//     {
+//     0,                  // seed
+//     {-10.0f, 10.0f, -10.0f, 10.0f}, // viewport
+//     { 
+//         Transform{4, 0, VariationDef(), Affine(0.824074, 0.281428, -1.88229, -0.212346, 0.864198, -0.110607), Parametric()}, 
+//         Transform{1, 1, VariationDef(), Affine(0.088272, 0.520988, 0.785360, -0.463889, -0.377778, 8.095795), Parametric()}
+//     },
+//     false, // hasFinalTransform
+//     Transform()
+//     },
+//     {
+//         {255, 0, 0}, {0, 0, 255} // two colors, one for each Transform above
+//     }
+// };
 
-std::vector<Preset> presets = {DragonCurve}; // https://paulbourke.net/fractals/ifs/ - copied these directly, just so I have a few options for displaying 
+std::vector<Preset> presets;// = {DragonCurve}; // https://paulbourke.net/fractals/ifs/ - copied these directly, just so I have a few options for displaying 
 
 int main() { 
     UIState ui;
@@ -188,7 +227,7 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
     
-    std::unique_ptr<Engine> fractal_engine = selectBackend(1);
+    std::unique_ptr<Engine> fractal_engine = selectBackend(ui.selectedBackend);
 
     std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
     ui.supportedVariations.resize(vars.size());
@@ -258,19 +297,40 @@ int main() {
         
 
         if(ImGui::IsItemHovered()) {
+            ImVec2 windowPos = ImGui::GetWindowPos();
+            ImVec2 rightStartPos = ImGui::GetIO().MouseClickedPos[ImGuiMouseButton_Right];
+            ImVec2 currentPos = ImGui::GetIO().MousePos;
+
+            rightStartPos.x -= windowPos.x;
+            rightStartPos.y -= windowPos.y;
+            currentPos.x -= windowPos.x;
+            currentPos.y -= windowPos.y;
             if(ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
                 ImVec2 delta = ImGui::GetIO().MouseDelta;
                 ui.view.centerX -= (delta.x / display.x) / ui.view.zoom;
                 ui.view.centerY -= (delta.y / display.y) / ui.view.zoom;
+            } else if(ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                ImGui::GetWindowDrawList()->AddRect(rightStartPos, currentPos, IM_COL32(255, 255, 0, 255), 0.0f, 0, 1.0f);
             }
 
-            float wheel = ImGui::GetIO().MouseWheel;
-            if(wheel != 0) {
-                ui.view.zoom *= (1.0 + wheel * 0.1);
-            }
+            if(ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+                if(ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] > 0) {
+                    Viewport vp = fractal_engine->getViewport();
+                    ImVec2 f1 = ui.toFractal(rightStartPos, vp, display);
+                    ImVec2 f2 = ui.toFractal(currentPos, vp, display);
+                    fractal_engine->setViewport(Viewport(f1.x, f1.y, f2.x, f2.y));
+                    ui.view = Camera(); // reset camera
+                    fractal_engine->start();
+                }
+            }        
+        }
+            
+
+        float wheel = ImGui::GetIO().MouseWheel;
+        if(wheel != 0) {
+            ui.view.zoom *= (1.0 + wheel * 0.1);
         }
         
-    
         ImGui::End();
         ImGui::PopStyleVar();
 
@@ -313,7 +373,7 @@ int main() {
             #endif 
             }; // this is hilarious and also accomplishes exactly what I want 
 
-            static int selectedBackend = 1;
+            static int selectedBackend = ui.selectedBackend;
 
 
             ImGui::SetNextWindowPos({10, 40}, ImGuiCond_Always); // settings positioning
@@ -504,7 +564,7 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
     } else  {
         ImGui::SetNextWindowPos({600, 80}, ImGuiCond_Appearing); // quickEdit positioning
         ImGui::SetNextWindowSize({300, 200}, ImGuiCond_Appearing);
-        ImGui::Begin("Quick Edit", &quickEditOpen);
+        ImGui::Begin("Quick Edit", &quickEditOpen, ImGuiWindowFlags_NoFocusOnAppearing);
         float gammaSlider = (float) color.gamma;
         if(ImGui::SliderFloat("Gamma", &gammaSlider, 0.1, 10, "%.1f")) {
             color.gamma = (double) gammaSlider;
@@ -521,8 +581,10 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
 
         if(fractal_engine->getMaxThreads() != 1) {
             ImGui::SliderInt("Thread Count", &ui.threadCount, 1, fractal_engine->getMaxThreads());
-
+            
+            // printf("getMaxThreads() = %d\r\n", fractal_engine->getMaxThreads());
             if (ImGui::IsItemDeactivatedAfterEdit()) {
+                printf("IsItemDeactivatedAfterEdit fired\r\n");
                 fractal_engine->setThreads(ui.threadCount);
             }
         }
