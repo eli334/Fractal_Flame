@@ -59,10 +59,20 @@ if(CCACHE_PROGRAM)
 endif()
 
 
-find_package(CUDAToolkit QUIET)
+find_package(CUDAToolkit 13.0 QUIET)
 
 if(CUDAToolkit_FOUND)
     message(STATUS "CUDA found -- building with GPU support")
+
+    find_program(CMAKE_CUDA_COMPILER nvcc
+        PATHS /usr/local/cuda/bin
+        NO_DEFAULT_PATH  # don't use system PATH, prefer our explicit path
+    )
+    if(NOT CMAKE_CUDA_COMPILER)
+        find_program(CMAKE_CUDA_COMPILER nvcc) # fallback to system PATH
+    endif()
+
+
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
     set(CMAKE_CUDA_ARCHITECTURES native)
@@ -139,12 +149,6 @@ add_executable(benchmark
     ./benchmark.cpp
 )
 
-target_link_libraries(benchmark PRIVATE
-    $<TARGET_OBJECTS:serial_engine>
-    $<TARGET_OBJECTS:openmp_engine>
-    OpenMP::OpenMP_CXX
-)
-
 target_compile_options(benchmark PRIVATE ${OpenMP_CXX_FLAGS})
 
 
@@ -154,12 +158,24 @@ target_link_libraries(fractal_flame PRIVATE
     $<TARGET_OBJECTS:openmp_engine>
 )
 
+target_link_libraries(benchmark PRIVATE
+        $<TARGET_OBJECTS:serial_engine>
+        $<TARGET_OBJECTS:openmp_engine>
+        OpenMP::OpenMP_CXX
+    )
+
 if(CUDAToolkit_FOUND)
     target_link_libraries(fractal_flame PRIVATE
         $<TARGET_OBJECTS:cuda_engine>
-        CUDA::cudart
+        CUDA::cudart_static
+    )
+    
+    target_link_libraries(benchmark PRIVATE
+        $<TARGET_OBJECTS:cuda_engine>
+        CUDA::cudart_static
     )
     target_compile_definitions(fractal_flame PRIVATE HAS_CUDA)
+    target_compile_definitions(benchmark PRIVATE HAS_CUDA)
 endif()
 
 

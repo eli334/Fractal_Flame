@@ -1,4 +1,5 @@
-#include "engines/openmp_engine.cpp"
+#include "./engines/openmp_engine.cpp"
+#include "./engines/cuda_engine.cuh"
 
 struct BenchmarkResult {
     std::string engine;
@@ -106,6 +107,7 @@ void runEngine(Engine& engine, uint64_t targetIterations) {
 
 
 int main() {
+    testCUDA();
     std::vector<int> seeds = {1687931058, -439194709, 1989290325, -219179936}; // your known seeds
     std::vector<int> threadCounts = {2, 4, 6, 8, 10, 12, 14, 16};
     uint64_t targetIterations = 200'000'000; // 200M

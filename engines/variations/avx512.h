@@ -1,0 +1,1 @@
+// Empty file for now.  I want to see if using AVX512 and running the fractal flames will bias the attractor too much.

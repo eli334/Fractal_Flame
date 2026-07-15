@@ -1,12 +1,6 @@
 #include "./engine.h"
 
-/* Calculation code:
-    Coordinate variation(Coordinate c) {} - same header for each -> [(x, y) -> (x, y)]
-    other variables:
-    r = sqrt(x^2 + y^2) -- r^2 = x^2 + y^2 -- std::hypot() because this is a hypotenuse
-    theta = arctan(x / y)
-    phi = arctan(y / x)
-*/
+
 
 
 // engine code

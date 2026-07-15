@@ -13,6 +13,10 @@
 // #include "./engines/serial_engine.cpp"
 #include "./engines/openmp_engine.cpp"
 
+#ifdef HAS_CUDA
+#include "./engines/cuda_engine.cuh"
+#endif
+
 // Fractal Flame frontend
 // GUI to pick the mode -- see engines directory (./engines/) for the actual code to generate flames
 
@@ -121,6 +125,12 @@ std::unique_ptr<Engine> selectBackend(int selection, int numThreads = std::max(1
         case 2: { // OpenMP
             return std::make_unique<OpenMP_Engine>(numThreads);
         }
+        #ifdef HAS_CUDA
+        case 3: {
+            std::unique_ptr<CUDA_Engine> engine = std::make_unique<CUDA_Engine>();
+            // return engine;
+        }   
+        #endif
         //case 3: // CUDA
         default: // None
             return nullptr;
@@ -455,8 +465,8 @@ int main() {
 void uploadHistogram(std::unique_ptr<Engine> &fractal_engine, UIState &ui, double gamma) { // function to push the global_histogram to opengl
     if(!fractal_engine) return;
     static std::vector<uint8_t> pixels;
-    int width = fractal_engine->getHistogram()->getWidth();
-    int height = fractal_engine->getHistogram()->getHeight();
+    int width = fractal_engine->getHistogram().getWidth();
+    int height = fractal_engine->getHistogram().getHeight();
     pixels.resize(width * height * 4);
     if(fractal_engine->fillPixelBuffer(pixels.data(), ui.color.palette.get(), ui.color.numColors, gamma, ui.view)) { // if the pixel buffer was updated, reupload bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma)
         // ImVec2 imageMin = ImGui::GetItemRectMin();
@@ -683,9 +693,9 @@ bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flame
         
         if(fractal_engine) {
             bool histDimChanged = false;
-            const Histogram<PixelData>* readOnlyHistogram = fractal_engine->getHistogram(); 
-            int histWidth = readOnlyHistogram->getWidth();
-            int histHeight = readOnlyHistogram->getHeight();
+            const Histogram<PixelData>& readOnlyHistogram = fractal_engine->getHistogram();
+            int histWidth = readOnlyHistogram.getWidth();
+            int histHeight = readOnlyHistogram.getHeight();
             ImGui::Text("Current RAM use: %.2f GB", ((double)histWidth*histHeight*(64 + 32))/ (double)8E9);
             ImGui::Text("Histogram Width");
             ImGui::SameLine();
