@@ -20,6 +20,7 @@ class Web_Engine : public Engine {
         std::unique_ptr<Xorshift64> rng;
         uint64_t iterationCounter = 0;
         bool warmedUp = false; // tracks whether the 20-iteration chaos-game warmup (see runBatch) has run yet
+        Coordinate coord;
 
     public:
         Web_Engine() : Engine() {
@@ -30,7 +31,7 @@ class Web_Engine : public Engine {
         // but reads the single member rng directly since Web_Engine never has
         // more than one "thread" (threadIndex is accepted only to satisfy the
         // Engine interface / getCurrent()).
-        Coordinate getStartingCoordinate(int threadIndex) override {
+        Coordinate getStartingCoordinate(int threadIndex) {
             (void)threadIndex;
             double x = 1 - 2 * rng->getDouble();
             double y = 1 - 2 * rng->getDouble();
@@ -57,21 +58,20 @@ class Web_Engine : public Engine {
             uint64_t seed = ((uint64_t)slowRNG() << 32) | slowRNG(); // random 64 bit number
 
             rng = std::make_unique<Xorshift64>(seed);
-            threadCoords.resize(1);
-            threadCoords[0] = getStartingCoordinate(0);
+            coord = getStartingCoordinate(0);
             iterationCounter = 0;
         }
 
         // No thread to spawn -- this just arms runBatch(). web_main.cpp's
         // emscripten_set_main_loop_arg callback is the actual loop driver.
         void start() override {
-            recordStartTime();
+            // recordStartTime();
             running = true;
         }
 
         void stop() override {
             running = false;
-            recordEndTime();
+            // recordEndTime();
         }
 
         void reset() override {
@@ -102,9 +102,9 @@ class Web_Engine : public Engine {
             return c;
         }
 
-        void step(Coordinate c, int threadIndex, Xorshift64 &rng) override {
-            threadCoords[threadIndex] = stepNoPlot(c, rng);
-            plot(threadCoords[threadIndex]);
+        void step(Coordinate c, Xorshift64 &rng) {
+            coord = stepNoPlot(c, rng);
+            plot(coord);
         }
 
         void plot(Coordinate pointToPlot) {
@@ -131,72 +131,16 @@ class Web_Engine : public Engine {
 
             if (!warmedUp) {
                 for (int i = 0; i < 20; i++) {
-                    threadCoords[0] = stepNoPlot(threadCoords[0], *rng);
+                    coord = stepNoPlot(coord, *rng);
                     iterationCounter++;
                 }
                 warmedUp = true;
             }
 
             for (uint64_t i = 0; i < n; i++) {
-                step(threadCoords[0], 0, *rng);
+                step(coord, *rng);
                 iterationCounter++;
             }
-        }
-
-        std::vector<VariationDef> getSupportedVariations() override { // updated by me, per engine, for frontend purposes
-            static std::vector<VariationDef> supportedVariations = { // static for c_str()
-                {0, "Identity"}, // called Linear in paper, but Identity makes more sense
-                {1, "Sinusoidal"},
-                {2, "Spherical"},
-                {3, "Swirl"},
-                {4, "Horseshoe"},
-                {5, "Polar"},
-                {6, "Handkerchief"},
-                {7, "Heart"},
-                {8, "Disc"},
-                {9, "Spiral"},
-                {10, "Hyperbolic"},
-                {11, "Diamond"},
-                {12, "Ex"},
-                {13, "Julia"},
-                {14, "Bent"},
-                {15, "Waves"},
-                {16, "Fisheye"},
-                {17, "Popcorn"},
-                {18, "Exponential"},
-                {19, "Power"},
-                {20, "Cosine"},
-                {21, "Rings"},
-                {22, "Fan"},
-                {23, "Blob"},
-                {24, "PDJ"},
-                {25, "Fan2"},
-                {26, "Rings2"},
-                {27, "Eyefish"},
-                {28, "Bubble"},
-                {29, "Cylinder"},
-                {30, "Perspective"},
-                {31, "Noise"},
-                {32, "JuliaN"},
-                {33, "JuliaScope"},
-                {34, "Blur"},
-                {35, "Gaussian"},
-                {36, "RadialBlur"},
-                {37, "Pie"},
-                {38, "Ngon"},
-                {39, "Curl"},
-                {40, "Rectangles"},
-                {41, "Arch"},
-                {42, "Tangent"},
-                {43, "Square"},
-                {44, "Rays"},
-                {45, "Blade"},
-                {46, "Secant"},
-                {47, "Twintrian"},
-                {48, "Cross"}
-            };
-
-            return supportedVariations;
         }
 
     protected:

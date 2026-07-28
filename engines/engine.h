@@ -80,7 +80,6 @@ class Engine {
 	
 	public:
 		virtual ~Engine() = default; // reset
-		virtual std::vector<VariationDef> getSupportedVariations() = 0;
 		virtual void setup(int numThreads) = 0; // Allocate memory for threads to access -- histograms and coordinates
 		virtual void start() = 0; // infinitely call step()
 		virtual void stop() = 0; // stop infinitely calling step()

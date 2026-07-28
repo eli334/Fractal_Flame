@@ -462,3 +462,58 @@ FLAME_FUNC inline Coordinate variation_cross(Coordinate c) { // Variation 48
     double coeff = sqrt(1.0 / (r2*r2));
     return {coeff * c.x, coeff * c.y};
 }
+
+inline std::vector<VariationDef> getSupportedVariations() {
+    static std::vector<VariationDef> supportedVariations = { // static for c_str()
+        {0,  "Identity",     vtag::SIMPLE},
+        {1,  "Sinusoidal",   vtag::TRIG},
+        {2,  "Spherical",    vtag::SIMPLE},
+        {3,  "Swirl",        vtag::TRIG},
+        {4,  "Horseshoe",    vtag::SIMPLE},
+        {5,  "Polar",        vtag::TRIG},
+        {6,  "Handkerchief", vtag::TRIG},
+        {7,  "Heart",        vtag::TRIG},
+        {8,  "Disc",         vtag::TRIG},
+        {9,  "Spiral",       vtag::TRIG},
+        {10, "Hyperbolic",   vtag::TRIG},
+        {11, "Diamond",      vtag::TRIG},
+        {12, "Ex",           vtag::TRIG},
+        {13, "Julia",        vtag::TRIG | vtag::STOCHASTIC},
+        {14, "Bent",         vtag::SIMPLE},
+        {15, "Waves",        vtag::TRIG | vtag::DEPENDENT},
+        {16, "Fisheye",      vtag::SIMPLE},
+        {17, "Popcorn",      vtag::TRIG | vtag::DEPENDENT},
+        {18, "Exponential",  vtag::EXP | vtag::TRIG},
+        {19, "Power",        vtag::TRIG | vtag::POW},
+        {20, "Cosine",       vtag::TRIG | vtag::HYPER},
+        {21, "Rings",        vtag::TRIG | vtag::DEPENDENT},
+        {22, "Fan",          vtag::TRIG | vtag::DEPENDENT},
+        {23, "Blob",         vtag::TRIG | vtag::PARAMETRIC},
+        {24, "PDJ",          vtag::TRIG | vtag::PARAMETRIC},
+        {25, "Fan2",         vtag::TRIG | vtag::PARAMETRIC},
+        {26, "Rings2",       vtag::TRIG | vtag::PARAMETRIC},
+        {27, "Eyefish",      vtag::SIMPLE},
+        {28, "Bubble",       vtag::SIMPLE},
+        {29, "Cylinder",     vtag::TRIG},
+        {30, "Perspective",  vtag::TRIG | vtag::PARAMETRIC},
+        {31, "Noise",        vtag::TRIG | vtag::STOCHASTIC},
+        {32, "JuliaN",       vtag::TRIG | vtag::POW | vtag::PARAMETRIC | vtag::STOCHASTIC},
+        {33, "JuliaScope",   vtag::TRIG | vtag::POW | vtag::PARAMETRIC | vtag::STOCHASTIC},
+        {34, "Blur",         vtag::TRIG | vtag::STOCHASTIC},
+        {35, "Gaussian",     vtag::TRIG | vtag::STOCHASTIC},
+        {36, "RadialBlur",   vtag::TRIG | vtag::PARAMETRIC | vtag::STOCHASTIC},
+        {37, "Pie",          vtag::TRIG | vtag::PARAMETRIC | vtag::STOCHASTIC},
+        {38, "Ngon",         vtag::TRIG | vtag::POW | vtag::PARAMETRIC},
+        {39, "Curl",         vtag::SIMPLE | vtag::PARAMETRIC},
+        {40, "Rectangles",   vtag::SIMPLE | vtag::PARAMETRIC},
+        {41, "Arch",         vtag::TRIG | vtag::STOCHASTIC},
+        {42, "Tangent",      vtag::TRIG},
+        {43, "Square",       vtag::SIMPLE | vtag::STOCHASTIC},
+        {44, "Rays",         vtag::TRIG | vtag::STOCHASTIC},
+        {45, "Blade",        vtag::TRIG | vtag::STOCHASTIC},
+        {46, "Secant",       vtag::TRIG},
+        {47, "Twintrian",    vtag::TRIG | vtag::LOG | vtag::STOCHASTIC},
+        {48, "Cross",        vtag::SIMPLE}
+    };
+    return supportedVariations;
+}

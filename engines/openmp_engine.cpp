@@ -61,26 +61,28 @@ class OpenMP_Engine : public Serial_Engine {
                 hist.clear();
             }
 
+            resetTotalIterations();
             static constexpr int batch_size = 10'000'000;
             
             #pragma omp parallel num_threads(numThreads) 
             {
                 int id = omp_get_thread_num();
                 logLevel(3, "Thread %d/%d reporting for duty!\r\n", id, numThreads);
-                
+
+                const int localBatch = batch_size / numThreads;
+
                 while(running) {    
-                    #pragma omp for schedule(static) nowait
                     for(int i = 0; i < batch_size; i++) {
                         // if(!running) break; // early exit if stopped // this is not allowed in OpenMP for loops...
                         stepThread(id);
                     }
                     // moved merge to after running -- it will 
-                    
+                    #pragma omp critical
+                    globalHistogram.merge(localHistograms[id]);
                 }
-                #pragma omp critical
-                globalHistogram.merge(localHistograms[id]);
+                
 
-                #pragma omp barrier
+                
                 if(!running) {
                     logLevel(3, "Thread %d exiting!\r\n", id);
                 }

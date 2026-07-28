@@ -8,22 +8,10 @@
 
 #include "../engines/web_engine.cpp"
 
-// ---------------------------------------------------------------------------
-// JS glue
-// ---------------------------------------------------------------------------
-// Raw <canvas> 2D context + putImageData -- no WebGL. fillPixelBuffer() already
-// produces RGBA8 bytes in exactly the layout ImageData wants, so this is a
-// straight byte copy out of the WASM heap, no shaders or textures involved.
-//
-// Pan/zoom input is read here too, but handled almost entirely in shell.html's
-// inline <script> (see that file) rather than via Emscripten's native pointer/
-// wheel callback API. Reason: this avoids depending on the exact current
-// field names of EmscriptenPointerEvent/EmscriptenWheelEvent, which I can't
-// verify against your specific Emscripten build from here (no network access
-// in my sandbox, and "6.0.2" is newer than what I have confident knowledge
-// of). Polling a couple of plain JS globals once per frame is a smaller
-// surface to get wrong, and easy to hand-debug directly in shell.html without
-// recompiling if the feel needs tuning.
+// JS glue -- raw <canvas> 2D + putImageData, no WebGL. fillPixelBuffer() returns
+// RGBA8 already in ImageData layout, so the blit is just a byte copy.
+// Pan/zoom is read from plain JS globals set in shell.html (not Emscripten's
+// pointer/wheel callbacks) -- less surface to get wrong, tweakable without recompiling.
 
 EM_JS(void, js_resize_canvas, (int width, int height), {
     const canvas = document.getElementById('canvas');
@@ -39,11 +27,8 @@ EM_JS(void, js_blit_pixels, (uintptr_t ptr, int byteLength), {
     Module.ctx2d.putImageData(Module.imageData, 0, 0);
 });
 
-// Each call drains and resets the corresponding JS-side accumulator -- see
-// the pointerdown/pointermove/wheel listeners in shell.html. Draining once
-// per frame (rather than reacting per-event) means bursts of pointermove
-// events between frames get coalesced into one camera update, which is what
-// we want anyway since we only redraw once per frame.
+// drain + reset the JS-side accumulators (listeners in shell.html); once per
+// frame, so bursts of pointermove coalesce into one update
 EM_JS(double, js_take_pan_dx, (), { const v = panDX; panDX = 0; return v; });
 EM_JS(double, js_take_pan_dy, (), { const v = panDY; panDY = 0; return v; });
 EM_JS(double, js_take_zoom_delta, (), { const v = zoomDelta; zoomDelta = 0; return v; });
@@ -55,17 +40,13 @@ EM_JS(double, js_take_zoom_delta, (), { const v = zoomDelta; zoomDelta = 0; retu
 struct AppState {
     std::unique_ptr<Web_Engine> engine;
     ColorState colorState;
-    Camera view; // display-time pan/zoom into the histogram -- see fillPixelBuffer.
-                 // This is NOT the accumulation Viewport (Engine::viewport), so
-                 // panning/zooming the Camera never wipes or re-renders anything;
-                 // it's a free re-crop of whatever's already been accumulated,
-                 // same as the native app's left-drag/scroll-wheel behavior.
+    Camera view; // display-time pan/zoom -- NOT the accumulation Viewport, so
+                 // panning never wipes the histogram, just re-crops it
     std::vector<uint8_t> pixels;
     int width = 800;
     int height = 600;
 
-    // Adaptive iteration budget -- see main_loop(). Starts conservative and
-    // converges to whatever this device can do in ~16ms within a few frames.
+    // adaptive iteration budget -- converges to ~16ms/frame (see main_loop)
     double avgFrameMs = 16.0;
     uint64_t iterationsPerFrame = 5000;
 
@@ -95,16 +76,13 @@ void main_loop(void* arg) {
         app->view.zoom = std::clamp(app->view.zoom, 0.01, 1.0e6);
     }
 
-    // 2. Run the chaos game for this frame's iteration budget, timed so we can
-    //    adapt the budget for next frame.
+    // 2. run the chaos game for this frame's budget, timed to adapt next frame
     double t0 = emscripten_get_now();
 
     app->engine->runBatch(app->iterationsPerFrame);
 
-    // 3. Re-render only if the histogram's peak density actually moved --
-    //    fillPixelBuffer() already tracks this internally and returns false
-    //    on frames where nothing would visibly change, so this also protects
-    //    weaker devices from paying for a putImageData they don't need.
+    // 3. re-render only if peak density moved -- fillPixelBuffer() returns
+    //    false when nothing would visibly change, skipping the blit
     bool changed = app->engine->fillPixelBuffer(
         app->pixels.data(),
         app->colorState.getPalettePtr(),
@@ -117,9 +95,8 @@ void main_loop(void* arg) {
         js_blit_pixels(reinterpret_cast<uintptr_t>(app->pixels.data()), app->width * app->height * 4);
     }
 
-    // 4. Adapt iterationsPerFrame toward the target frame budget. Smoothed
-    //    with an EMA so one slow frame (GC pause, thermal blip) doesn't cause
-    //    a wild overcorrection on the next.
+    // 4. adapt iterationsPerFrame toward target, EMA-smoothed so one slow
+    //    frame (GC pause) doesn't overcorrect
     double elapsedMs = emscripten_get_now() - t0;
     app->avgFrameMs = 0.9 * app->avgFrameMs + 0.1 * elapsedMs;
 
@@ -135,18 +112,14 @@ void main_loop(void* arg) {
 // ---------------------------------------------------------------------------
 
 int main() {
-    // Heap-allocated and intentionally never freed: emscripten_set_main_loop_arg
-    // with simulate_infinite_loop=true means main() returns control to the
-    // browser immediately, but keeps getting called back into indefinitely.
-    // Anything main_loop() touches has to outlive that "return".
+    // heap-allocated, never freed: simulate_infinite_loop=true returns main()
+    // to the browser but keeps calling main_loop, so app must outlive it
     AppState* app = new AppState();
 
     app->engine = std::make_unique<Web_Engine>();
 
-    // Reuses Engine::randomize()/calculateViewport() as-is -- same call the
-    // native app's "Randomize!" button makes. Picks 2-8 random transforms,
-    // statistically estimates a Viewport that frames the resulting attractor,
-    // and returns a seed for a matching color palette.
+    // same as the native "Randomize!" -- 2-8 random transforms, estimated
+    // viewport, returns a palette seed
     int colorSeed = app->engine->randomize();
     app->colorState.randomizeColors(static_cast<int>(app->engine->getTransforms().size()), colorSeed);
 

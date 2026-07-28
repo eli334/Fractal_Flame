@@ -39,10 +39,6 @@ public:
     /// @return 
     Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) override;
     
-    /// @brief Returns a vector that corellates to variations in engine.h
-    /// @return 
-    std::vector<VariationDef> getSupportedVariations() override;
-    
     bool done() override;
 
     /// @brief 

@@ -16,13 +16,17 @@ set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
 set(CMAKE_CXX_FLAGS_PROFILING "${CMAKE_CXX_FLAGS_PROFILING} -O2 -Wall -pg")
 
 # Debug build flags
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Og -fsanitize=address,undefined -Wall -Wextra")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Og -Wall -Wextra")
 
-# Release build flags
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto=auto -fno-omit-frame-pointer" )
-
-# Ultra speed flags
-set(CMAKE_CXX_FLAGS_SPEED "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto=auto")
+# Release / Speed -- native-only flags gated behind NOT EMSCRIPTEN (harmful for WASM)
+if(NOT EMSCRIPTEN)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -march=native -flto=auto -fno-omit-frame-pointer")
+    set(CMAKE_CXX_FLAGS_SPEED   "${CMAKE_CXX_FLAGS_SPEED} -Ofast -DNDEBUG -march=native -flto=auto")
+else()
+    # WASM: no -march=native; emscripten picks the target
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_SPEED   "${CMAKE_CXX_FLAGS_SPEED} -O3 -DNDEBUG")
+endif()
 
 ## Emscripten is a WASM compiler -- I want to get this working in-browser.
 ## link (if it's working) is https://fractal.emahizer.net
@@ -66,7 +70,7 @@ if(CUDAToolkit_FOUND)
 
     find_program(CMAKE_CUDA_COMPILER nvcc
         PATHS /usr/local/cuda/bin
-        NO_DEFAULT_PATH  # don't use system PATH, prefer our explicit path
+        NO_DEFAULT_PATH  # don't use system PATH, prefer explicit path
     )
     if(NOT CMAKE_CUDA_COMPILER)
         find_program(CMAKE_CUDA_COMPILER nvcc) # fallback to system PATH
@@ -141,9 +145,12 @@ if(CUDAToolkit_FOUND)
 endif()
 
 # Define your executable (Only your own source code file remains!)
-add_executable(fractal_flame 
+add_executable(frontend 
     ./fractal_flame_frontend.cpp    
 )
+
+# target is "frontend", on-disk binary stays fractal_flame
+set_target_properties(frontend PROPERTIES OUTPUT_NAME fractal_flame)
 
 add_executable(benchmark
     ./benchmark.cpp
@@ -151,9 +158,20 @@ add_executable(benchmark
 
 target_compile_options(benchmark PRIVATE ${OpenMP_CXX_FLAGS})
 
+# ASan+UBSan on host targets only, Debug only. nvcc rejects -fsanitize, so
+# skip cuda_engine (use compute-sanitizer for device).
+# CUDA-enabled Debug runs may need ASAN_OPTIONS=protect_shadow_gap=0
+set(HOST_SANITIZE_TARGETS serial_engine openmp_engine frontend benchmark)
+foreach(sanitize_target IN LISTS HOST_SANITIZE_TARGETS)
+    target_compile_options(${sanitize_target} PRIVATE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+endforeach()
+# link options only matter for the executables (object libs are never linked)
+target_link_options(frontend  PRIVATE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+target_link_options(benchmark PRIVATE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 
 
-target_link_libraries(fractal_flame PRIVATE
+
+target_link_libraries(frontend PRIVATE
     $<TARGET_OBJECTS:serial_engine>
     $<TARGET_OBJECTS:openmp_engine>
 )
@@ -165,7 +183,7 @@ target_link_libraries(benchmark PRIVATE
     )
 
 if(CUDAToolkit_FOUND)
-    target_link_libraries(fractal_flame PRIVATE
+    target_link_libraries(frontend PRIVATE
         $<TARGET_OBJECTS:cuda_engine>
         CUDA::cudart_static
     )
@@ -174,7 +192,7 @@ if(CUDAToolkit_FOUND)
         $<TARGET_OBJECTS:cuda_engine>
         CUDA::cudart_static
     )
-    target_compile_definitions(fractal_flame PRIVATE HAS_CUDA)
+    target_compile_definitions(frontend PRIVATE HAS_CUDA)
     target_compile_definitions(benchmark PRIVATE HAS_CUDA)
 endif()
 
@@ -187,7 +205,7 @@ target_include_directories(imgui_lib PUBLIC
 
 
 # Link everything (CMake tracks include headers and system graphics libs automatically!)
-target_link_libraries(fractal_flame PRIVATE
+target_link_libraries(frontend PRIVATE
     imgui_lib
     OpenMP::OpenMP_CXX 
     glfw 
@@ -196,7 +214,3 @@ target_link_libraries(fractal_flame PRIVATE
 )
 
 endif() # EMSCRIPTEN
-
-
-
-

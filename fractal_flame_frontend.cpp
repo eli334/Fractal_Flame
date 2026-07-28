@@ -239,7 +239,7 @@ int main() {
     
     std::unique_ptr<Serial_Engine> fractal_engine = selectBackend(ui.selectedBackend);
 
-    std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
+    std::vector<VariationDef> vars = getSupportedVariations();
     ui.supportedVariations.resize(vars.size());
     for(size_t i = 0; i < vars.size(); i++) {
         ui.supportedVariations[i] = vars[i].name; 
@@ -401,7 +401,7 @@ int main() {
                 if(selectedBackend == 0) { // None
                     ui.supportedVariations = {};
                 } else {
-                    std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
+                    std::vector<VariationDef> vars = getSupportedVariations();
                     ui.supportedVariations.resize(vars.size());
                     for(size_t i = 0; i < vars.size(); i++) {
                         ui.supportedVariations[i] = vars[i].name; 
@@ -834,7 +834,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Serial_Engine> &fractal_engine)
 
             if(ImGui::Combo("##transformSelector", &finalTransformIndex, supportedVars.data(), supportedVars.size())) {
                 Transform temp;
-                temp.variation = fractal_engine->getSupportedVariations()[finalTransformIndex];
+                temp.variation = getSupportedVariations()[finalTransformIndex];
                 temp.color = 0.5;
                 fractal_engine->setFinalTransform(temp);
             }

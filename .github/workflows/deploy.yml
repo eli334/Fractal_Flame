@@ -11,9 +11,11 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.2
       - name: Configure and build (Emscripten)
         run: |
-          source ~/docker/development/flame/emsdk/emsdk_env.sh
           emcmake cmake -B build-web
           cmake --build build-web --target flame_web
       - name: Deploy to SWAG

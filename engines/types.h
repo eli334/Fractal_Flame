@@ -11,7 +11,6 @@
 #include <memory>     // std::unique_ptr
 #include <cstdarg>    // va_list, va_start, va_end in logLevel()
 #include <unistd.h>	  // i just wanted colors man
-static bool useColor = isatty(fileno(stdout));
 
 
 #ifdef __CUDACC__
@@ -43,6 +42,14 @@ FLAME_FUNC_HOST inline void logLevel(int tier, const char* fmt, ...) { // unknow
     if (tier > LOG_LEVEL) return;
 	
 	const char* name  = "";
+	switch (tier) {
+		case LOG_SILENT:	name = "SILENT"; 		break;
+		case LOG_SUMMARY:   name = "SUMMARY"; 		break;
+		case LOG_LIFECYCLE: name = "LIFECYCLE"; 	break; 
+		case LOG_CHATTER:   name = "CHATTER"; 		break; 
+		default:            name = "";         		break;
+	}
+
 	if(useColor()) {
 		const char* color = "";
 		switch (tier) {
@@ -54,8 +61,7 @@ FLAME_FUNC_HOST inline void logLevel(int tier, const char* fmt, ...) { // unknow
     	}
 		printf("%s", color);
 	}
-
-	printf("[%d]: ", tier);
+	printf("[%s]: ", name);
 	
 	va_list args;
     va_start(args, fmt);
@@ -99,11 +105,31 @@ struct Affine {
 
 };
 
+namespace vtag { // really cool trick -- vtag::SIMPLE for 0x1, etc. Pretty intuitive, and I can ctrl+click vtag in VSCode to see what the full table is again
+    // math nature
+	constexpr uint32_t SIMPLE = 0x1; // +/-/*/÷, sqrt, floor, abs
+    constexpr uint32_t TRIG   = 0x2; // sin/cos/tan/atan^2/sincos()
+    constexpr uint32_t EXP    = 0x4; // e^x
+    constexpr uint32_t LOG    = 0x8; // log/log10
+	constexpr uint32_t HYPER  = 0x10; // sinh/cosh/tanh
+	constexpr uint32_t POW    = 0x20;  // pow(b,e) — internally exp(e·ln b), heaviest transcendental
+	// 0x40
+	// 0x80
+	
+	// 
+	constexpr uint32_t STOCHASTIC  = 0x100; // takes Xorshift64*
+	constexpr uint32_t DEPENDENT   = 0x200; // takes Affine* (the paper called it this so I made it an axis -- honestly just for organization)
+	constexpr uint32_t PARAMETRIC  = 0x400; // takes Parametric*
+}
+
+
 struct VariationDef {
 	int index = 0;
 
 	std::string name = "Identity";
 	// std::string formula = "(x, y)";
+
+	uint32_t tags = 0;
 
 	std::string formattedOutput = ""; // heap-allocated -- stored with struct so I don't have to think about
 	const char* toString() {

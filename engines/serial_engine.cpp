@@ -48,6 +48,12 @@ class Serial_Engine : public Engine {
             return {x, y, color};
         }
 
+        // reset total iterations when randomizing -- needed to fix gamma (new randoms would be dark; underexposed)
+        void resetTotalIterations(){
+            std::fill(iterationCounters.begin(), iterationCounters.end(), 0);
+        }
+
+
         // get the total number of iterations from all threads
         uint64_t getTotalIterations() {
             uint64_t totalIterations = 0;
@@ -162,62 +168,6 @@ class Serial_Engine : public Engine {
                 globalHistogram.data[index].hits++;
                 globalHistogram.data[index].color += pointToPlot.color;
             }
-        }
-
-        std::vector<VariationDef> getSupportedVariations() { // updated by me, per engine, for frontend purposes
-            static std::vector<VariationDef> supportedVariations = { // static for c_str()
-                {0, "Identity"}, // called Linear in paper, but Identity makes more sense
-                {1, "Sinusoidal"},
-                {2, "Spherical"},
-                {3, "Swirl"},
-                {4, "Horseshoe"},
-                {5, "Polar"},
-                {6, "Handkerchief"},
-                {7, "Heart"},
-                {8, "Disc"},
-                {9, "Spiral"},
-                {10, "Hyperbolic"},
-                {11, "Diamond"},
-                {12, "Ex"},
-                {13, "Julia"},
-                {14, "Bent"},
-                {15, "Waves"},
-                {16, "Fisheye"},
-                {17, "Popcorn"},
-                {18, "Exponential"},
-                {19, "Power"},
-                {20, "Cosine"},
-                {21, "Rings"},
-                {22, "Fan"},
-                {23, "Blob"},
-                {24, "PDJ"},
-                {25, "Fan2"},
-                {26, "Rings2"},
-                {27, "Eyefish"},
-                {28, "Bubble"},
-                {29, "Cylinder"},
-                {30, "Perspective"},
-                {31, "Noise"},
-                {32, "JuliaN"},
-                {33, "JuliaScope"},
-                {34, "Blur"},
-                {35, "Gaussian"},
-                {36, "RadialBlur"},
-                {37, "Pie"},
-                {38, "Ngon"},
-                {39, "Curl"},
-                {40, "Rectangles"},
-                {41, "Arch"},
-                {42, "Tangent"},
-                {43, "Square"},
-                {44, "Rays"},
-                {45, "Blade"},
-                {46, "Secant"},
-                {47, "Twintrian"},
-                {48, "Cross"}
-            };
-
-            return supportedVariations;
         }
     
     protected:
