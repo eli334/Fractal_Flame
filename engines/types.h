@@ -1,19 +1,72 @@
 #pragma once
-#include <cstdint>    // uint8_t, uint64_t
-#include <cstring>    // might not be needed actually
-#include <cfloat>     // DBL_MAX
-#include <vector>     // std::vector in Histogram and ColorState
-#include <string>     // std::string in VariationDef, Transform, etc.
-#include <sstream>    // std::stringstream in toString() methods
-#include <iomanip>    // std::setprecision in toString() methods
 #include <algorithm>  // std::fill in Histogram::clear(), std::max_element
 #include <cassert>    // assert in Histogram::get()
-#include <math.h>     // for variations that use math -- actually this might belong in variations/standard.h
+#include <cfloat>     // DBL_MAX
+#include <cstdint>    // uint64_t
+#include <iomanip>    // std::setprecision in toString() methods
+#include <sstream>    // std::stringstream in toString() methods
+#include <string>     // std::string in VariationDef, Transform, etc.
+#include <vector>     // std::vector in Histogram and ColorState
+#include <math.h>     // for variations that use math
 #include <memory>     // std::unique_ptr
+#include <cstdarg>    // va_list, va_start, va_end in logLevel()
+#include <unistd.h>	  // i just wanted colors man
+static bool useColor = isatty(fileno(stdout));
+
+
+#ifdef __CUDACC__
+#define FLAME_FUNC __host__ __device__
+#define FLAME_FUNC_HOST __host__
+#else
+#define FLAME_FUNC
+#define FLAME_FUNC_HOST
+#endif
+
+#ifndef LOG_LEVEL
+#define LOG_LEVEL 2
+#endif
+
+
+enum LogTier { 
+	LOG_SILENT = 0, // errors
+	LOG_SUMMARY = 1, // run length, stats -- the usual level
+	LOG_LIFECYCLE = 2, // engine spawns / despawns
+	LOG_CHATTER = 3 // inside of engines
+};
+
+inline bool useColor() {
+    static bool cached = isatty(fileno(stdout));
+    return cached;
+}
+
+FLAME_FUNC_HOST inline void logLevel(int tier, const char* fmt, ...) { // unknown how many variables, so ... catches them all and a va_list grabs the variables, giving me a modified printf
+    if (tier > LOG_LEVEL) return;
+	
+	const char* name  = "";
+	if(useColor()) {
+		const char* color = "";
+		switch (tier) {
+			case LOG_SILENT:	color = ""; 		break;
+			case LOG_SUMMARY:   color = "\033[32m"; break; // green — results
+			case LOG_LIFECYCLE: color = "\033[36m"; break; // cyan — events
+			case LOG_CHATTER:   color = "\033[90m"; break; // grey — noise
+			default:            color = "";         break;
+    	}
+		printf("%s", color);
+	}
+
+	printf("[%d]: ", tier);
+	
+	va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+}
+
 
 // File contents:
 // Affine, VariationDef, Parametric, Transform, Coordinate, PixelData
-// Histogram<T>, Color, Viewport, Canera, Xorshift64, 
+// Histogram<T>, Color, Viewport, Canera, Xorshift64
 
 struct Affine {
 	double a = 1.0, b = 0.0, c = 0.0;
@@ -116,7 +169,7 @@ struct Coordinate {
 
 struct PixelData{
 	uint64_t hits = 0;
-	double color = 0;
+	float color = 0;
 
 	bool operator<(const PixelData& other) const {
 		return hits < other.hits;
@@ -275,31 +328,31 @@ struct Viewport {
 };
 
 struct Camera {
-	double centerX = 0.5;
-	double centerY = 0.5;
-	double zoom = 1.0;
+	double centerX = 0.5; // centerX = 0 would be the camera centered on the left edge, centerX = 1 would be on the right edge
+	double centerY = 0.5; // centerY = 0 would be the camera centered on the bottom edge, centerY = 1 would be on the top edge
+	double zoom = 1.0;	  // 1.0 by default - fills entire screen
 };
 
 // xorshift64 -- fast, pseudorandom number generator
-
+// needs FLAME_FUNC to work in CUDA
 struct Xorshift64 {
 	Xorshift64() = delete;
-	Xorshift64(uint64_t seed) {
+	FLAME_FUNC Xorshift64(uint64_t seed) {
 		state = seed;
-		if(state == 0) {		   // Breaks if seeded with 0, so.. don't allow it.
-			state = 0xBADBEEFBADBEEFBULL; // bad beef bull -- random data for my xorshift64 seed
+		if(state == 0) { // 0 is the only degenerate state of Xorshift
+			state = 0xBADBEEFBADBEEFBULL; // bad beef bull -- random data for my Xorshift64 seed if seed was made 0
 		}
 	}
 
 	uint64_t state;
-	uint64_t next() {
+	FLAME_FUNC uint64_t next() {
 		state ^= state << 13;
 		state ^= state >> 7;
 		state ^= state << 17;
 		return state;
 	}
 
-	double getDouble() {
+	FLAME_FUNC double getDouble() {
         return (next() >> 11) * (1.0 / (1ULL << 53)); // discards bottom 11 bits, making it a uint64_t from [0, 2^53-1]
     }												  // then, multiplies by (1/2^53), mapping it from [0, 1) -- this is effectively [0, 1]
 };

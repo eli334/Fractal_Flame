@@ -6,7 +6,7 @@ class OpenMP_Engine : public Serial_Engine {
     public:
         OpenMP_Engine(int desiredThreads) {
             if(desiredThreads < 0 || desiredThreads > omp_get_max_threads()) desiredThreads = 1; // guard -- set threads to 1
-            printf("Desired threads = %d\r\n", desiredThreads);
+            logLevel(2, "Desired threads = %d\r\n", desiredThreads);
             setup(desiredThreads);
         }
 
@@ -38,8 +38,8 @@ class OpenMP_Engine : public Serial_Engine {
             }
         }
 
-        int setThreads(int desiredThreadCount) override  {
-            printf("setThreads called with %d\r\n", desiredThreadCount);
+        int setThreads(int desiredThreadCount) {
+            logLevel(2, "setThreads called with %d\r\n", desiredThreadCount);
             if(desiredThreadCount <= getMaxThreads() && desiredThreadCount > 0) {
                 if(running) {
                     stop();
@@ -55,7 +55,7 @@ class OpenMP_Engine : public Serial_Engine {
 		}
 
         void workerLoop(int numThreads) {
-            printf("%d threads spawning.\r\n", numThreads);
+            logLevel(3, "%d threads spawning.\r\n", numThreads);
             globalHistogram.clear();
             for(Histogram<PixelData>& hist : localHistograms) {
                 hist.clear();
@@ -66,7 +66,7 @@ class OpenMP_Engine : public Serial_Engine {
             #pragma omp parallel num_threads(numThreads) 
             {
                 int id = omp_get_thread_num();
-                printf("Thread %d/%d reporting for duty!\r\n", id, numThreads);
+                logLevel(3, "Thread %d/%d reporting for duty!\r\n", id, numThreads);
                 
                 while(running) {    
                     #pragma omp for schedule(static) nowait
@@ -82,9 +82,9 @@ class OpenMP_Engine : public Serial_Engine {
 
                 #pragma omp barrier
                 if(!running) {
-                    printf("Thread %d exiting!\r\n", id);
+                    logLevel(3, "Thread %d exiting!\r\n", id);
                 }
             }
-            printf("workerLoop:  parallel block exited.\r\n");
+            logLevel(3, "workerLoop:  parallel block exited.\r\n");
         }
 };       

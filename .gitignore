@@ -1,5 +1,6 @@
 .vscode/
 /build
+/results
 imgui.ini
 build-web/
 compile_commands.json

@@ -1,10 +1,8 @@
 #pragma once
-#include "types.h"
-#include <chrono>
-#include <thread>
+#include "./types.h"
 #include <atomic>
 #include <random>
-#include <iostream>
+
 
 #ifndef FLAME_VARIATIONS
 #include "./variations/standard.h"
@@ -35,33 +33,17 @@ class Engine {
 	protected:
 		uint64_t targetIterations = 100'000'000; // 100M iterations
 		std::atomic<bool> running = false;
+		
 		Viewport viewport;
 		std::vector<Transform> transforms;
+		
 		bool hasFinalTransform = false;
 		Transform finalTransform;
+		
 		Histogram<PixelData> globalHistogram;
-	
-		std::vector<Coordinate> threadCoords;
-		std::vector<uint64_t> totalHits{1};
+		
 
 		int seed = 0;
-		std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
-		std::chrono::system_clock::time_point startWallTime = std::chrono::system_clock::now();
-		
-		void recordStartTime() {
-			startTime = std::chrono::steady_clock::now();
-			startWallTime = std::chrono::system_clock::now();
-    	}
-		
-		void recordEndTime() {
-			static int debugNumCalls = 0;
-            debugNumCalls += 1;
-
-			std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
-            std::chrono::duration<double> runLength = endTime - startTime;
-            printf("Stopping... (stop #%d)\r\n", debugNumCalls);
-            printf("Run length was %.2f seconds.\r\nThis is an average of %.1f iterations/sec.\r\n\r\n", runLength.count(), getTotalIterations() / runLength.count());
-		}
 		
 		void configChanged() {
 			globalHistogram.clear();
@@ -83,6 +65,7 @@ class Engine {
 				totalWeight += transforms[i].weight;
 			}
 		}
+
 		void recalculateColors() {
 			if(this->transforms.size() == 1) {
 				this->transforms[0].color = 1.0;
@@ -96,21 +79,17 @@ class Engine {
 	
 	
 	public:
-		virtual void step(Coordinate c, int threadIndex, Xorshift64 &rng) = 0; // iterate coordinate once   
-		virtual Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) = 0;
 		virtual ~Engine() = default; // reset
-		
 		virtual std::vector<VariationDef> getSupportedVariations() = 0;
-		
 		virtual void setup(int numThreads) = 0; // Allocate memory for threads to access -- histograms and coordinates
-		virtual Coordinate getStartingCoordinate(int threadIndex) = 0;
 		virtual void start() = 0; // infinitely call step()
 		virtual void stop() = 0; // stop infinitely calling step()
 		virtual void reset() = 0; // go back to initial state -- empty histogram 
 		virtual uint64_t getTotalIterations() = 0;// used for data -- frontend reads it, and it's "accurate enough" even if it's slightly wrong
 		virtual uint64_t getMaxHits() = 0;
+		virtual Coordinate stepNoPlot(Coordinate c, Xorshift64& rng) { return c; };
 		
-		bool done() {
+		virtual bool done() {
 			return getTotalIterations() >= targetIterations;
 		}
 
@@ -118,26 +97,7 @@ class Engine {
 			targetIterations = iterations;
 		}
 
-		virtual int setThreads(int desiredThreadCount) {
-			printf("setThreads called with %d\r\n", desiredThreadCount);
-			if(desiredThreadCount <= getMaxThreads() && desiredThreadCount > 0) {
-				if(running) {
-					stop();
-					setup(desiredThreadCount);
-					start();
-				} else {
-					setup(desiredThreadCount);
-				}
-				return desiredThreadCount;            
-			} else {
-				return setThreads(1);
-			}
-		}
-
-
-		virtual int getMaxThreads() { 
-			return 1;
-		}
+		
 
 		// not very organized: abstract class is below, this desperately needs a documentation pass
 		float getTotalWeight() {
@@ -164,6 +124,40 @@ class Engine {
 			if(running) stop();
 			viewport = vp;
 			configChanged();
+		}
+		
+		void calculateViewport() {
+			constexpr int viewportIterations = 1'000'000; 
+			std::random_device rd;
+			Xorshift64 rng((uint64_t)rd() << 32 | rd());
+			double x = 1 - 2 * rng.getDouble();
+			double y = 1 - 2 * rng.getDouble();
+			double color = rng.getDouble();
+			Coordinate viewportThreadCoord = {x, y, color};
+			std::vector<double> xVector, yVector;
+			xVector.reserve(viewportIterations); // 1 million x points - reserve so it doesn't slow down to heap allocate
+			yVector.reserve(viewportIterations); // 1 million y points
+			// discard color -- viewport is colorblind :(
+
+			for(int i = 0; i < viewportIterations; i++) { // 100k
+				viewportThreadCoord = this->stepNoPlot(viewportThreadCoord, rng);
+				if(std::isfinite(viewportThreadCoord.x) && std::isfinite(viewportThreadCoord.y)) { // not NaN
+					xVector.push_back(viewportThreadCoord.x);
+					yVector.push_back(viewportThreadCoord.y);
+				}
+			}
+
+			std::sort(xVector.begin(), xVector.end());
+			std::sort(yVector.begin(), yVector.end());
+
+			double cutoff = 0.005; // user changable "zoom" in the future?
+			size_t low_x = xVector.size() * cutoff;
+			size_t high_x = xVector.size() * (1.0 - cutoff);
+
+			size_t low_y = yVector.size() * cutoff;
+			size_t high_y = yVector.size() * (1.0 - cutoff);
+
+			setViewport(Viewport(xVector[low_x], xVector[high_x], yVector[low_y], yVector[high_y]));
 		}
 
 		void applyPreset(EngineState state) {
@@ -201,11 +195,6 @@ class Engine {
 			return running;
 		}
 		
-		Coordinate getCurrent(int index) {
-			size_t correctIndexType = (size_t) index; // oh, C++
-			if(correctIndexType > threadCoords.size()) return Coordinate(); // if OOB, just return (0, 0) - i don't even use getCurrent
-			return threadCoords[correctIndexType];
-		}
 
 		void resize(int width, int height) {
 			if(running) stop();
@@ -233,9 +222,7 @@ class Engine {
 			}
 			if(maxVal == 0) return false; // don't render when nothing has generated yet
 			if(lastMaxVal == maxVal) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
-			
-			// printf("Starting upload...\r\n");
-			
+						
 			double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double, with 1.0 because log(0) is undefined
 			
 			static std::vector<double> logTable;
@@ -327,73 +314,37 @@ class Engine {
 		// }
 		
 		void removeTransform(int index) {
-			printf("removeTransform called\r\n");
+			logLevel(LOG_CHATTER, "removeTransform called\r\n");
 			if(running) stop();
 			this->transforms.erase(transforms.begin() + index);
 			configChanged();
 		}
 
 		void addTransform(Transform transform) {
-			printf("addTransform called\r\n");
+			logLevel(LOG_CHATTER, "addTransform called\r\n");
 			if(running) stop();
 			this->transforms.push_back(transform); // add the transform
 			configChanged();
 		}
 
 		void setTransforms(std::vector<Transform> transforms) {
-			// printf("setTransforms called with %d transforms\r\n", (int)transforms.size());
+			logLevel(LOG_CHATTER, "setTransforms called with %d transforms\r\n", (int)transforms.size());
 			if(running) stop();
 			this->transforms = transforms; // set the transforms
 			configChanged();
 		}
 
 		void setTransform(int index, Transform transform) {
-			printf("Transform %d changed!\r\n%s", index, transform.toString(index));
+			logLevel(LOG_CHATTER, "Transform %d changed!\r\n%s", index, transform.toString(index));
 			if(running) stop();
 			this->transforms[index] = transform;
 			configChanged();
 		}
 
-		void calculateViewport() {
-			std::random_device rd;
-			Xorshift64 rng((uint64_t)rd() << 32 | rd());
-			double x = 1 - 2 * rng.getDouble();
-			double y = 1 - 2 * rng.getDouble();
-			double color = rng.getDouble();
-			Coordinate viewportThreadCoord = {x, y, color};
-			std::vector<double> xVector, yVector;
-			xVector.reserve(1000000); // 1 million x points - reserve so it doesn't slow down to heap allocate
-			yVector.reserve(1000000); // 1 million y points
-			// discard color -- viewport is colorblind :(
-
-
-			for(int i = 0; i < 100'000; i++) { // 100k
-				viewportThreadCoord = stepNoPlot(viewportThreadCoord, rng);
-				if(std::isfinite(viewportThreadCoord.x) && std::isfinite(viewportThreadCoord.y)) { // not NaN
-					xVector.push_back(viewportThreadCoord.x);
-					yVector.push_back(viewportThreadCoord.y);
-				}
-			}
-
-			std::sort(xVector.begin(), xVector.end());
-			std::sort(yVector.begin(), yVector.end());
-
-			double cutoff = 0.005; // user changable "zoom" in the future?
-			size_t low_x = xVector.size() * cutoff;
-			size_t high_x = xVector.size() * (1.0 - cutoff);
-
-			size_t low_y = yVector.size() * cutoff;
-			size_t high_y = yVector.size() * (1.0 - cutoff);
-
-			setViewport(Viewport(xVector[low_x], xVector[high_x], yVector[low_y], yVector[high_y]));
-			}
-		
 		int randomize() {
-            printf("Randomize called!\r\n");
+            logLevel(LOG_CHATTER, "Randomize called!\r\n");
 			std::random_device entropyGenerator;
             int randomSeed = (int) entropyGenerator();
-			// printf("seed is %d\r\n", randomSeed);
-            // printf("random_device entropy: %.3f\r\n", entropyGenerator.entropy());
 			return randomize(randomSeed);
 		}
 
@@ -402,7 +353,7 @@ class Engine {
 
 			std::mt19937 rng(randomSeed);
             int numRandTransforms = transformCountDist(rng);
-            printf("seed is %d, numTransforms = %d\r\n", randomSeed, numRandTransforms);
+            logLevel(LOG_CHATTER, "seed is %d, numTransforms = %d\r\n", randomSeed, numRandTransforms);
 
 			std::vector<VariationDef> allowedVariations = getSupportedVariations(); // all for now -- might make checkboxes
 			
@@ -517,7 +468,7 @@ struct ColorState {
 			double saturation = satDist(rng);
 			double value = valDist(rng);
 			funcColors[i] = Color::hsvToRGB(hue, saturation, value);
-            printf("funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
+            logLevel(LOG_CHATTER, "funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
 		}
 		buildPalette();
     }
@@ -529,7 +480,7 @@ struct ColorState {
 
     void buildPalette(int numColors) {
         palette = std::make_unique<Color[]>(numColors);
-        printf("There are %ld functions.\r\n", funcColors.size());
+        logLevel(LOG_CHATTER, "There are %ld functions.\r\n", funcColors.size());
         std::vector<Color> lerpColors;
         
         if(funcColors.size() == 0) {
@@ -559,7 +510,7 @@ struct ColorState {
             palette[i].b = static_cast<uint8_t>(a.b + localT * (b.b - a.b));
         }
 
-        printf("Palette made!\r\n");
+        logLevel(LOG_CHATTER, "Palette made!\r\n");
         
         floats.resize(funcColors.size()*3);
         for(size_t i = 0; i < funcColors.size(); i++) {
@@ -567,7 +518,7 @@ struct ColorState {
             floats[3*i+1] = funcColors[i].g / 255.0;
             floats[3*i+2] = funcColors[i].b / 255.0;
         }
-        printf("Floats changed!\r\n");
+        logLevel(LOG_CHATTER, "Floats changed!\r\n");
     }
 
     const Color* getPalettePtr() {

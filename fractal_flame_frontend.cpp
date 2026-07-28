@@ -40,25 +40,25 @@ struct UIState {
         color.resizeVectors(newSize);   
     }
 
-    void renderDebug(std::unique_ptr<Engine> &fractal_engine);
+    void renderDebug(std::unique_ptr<Serial_Engine> &fractal_engine);
     bool resetIPS = false;
     bool debugMenu = false; // defaults to off -- prints affines / parametric coeffs
 
-    void renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen);
+    void renderSettingsButton(std::unique_ptr<Serial_Engine> &fractal_engine, bool &settingsOpen);
 
-    void renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos);
+    void renderQuickEdit(std::unique_ptr<Serial_Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos);
 
-    void renderPresetsWindow(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets);
+    void renderPresetsWindow(std::unique_ptr<Serial_Engine> &fractal_engine, std::vector<Preset> &presets);
 
-    void renderPlayPaused(std::unique_ptr<Engine> &fractal_engine);
+    void renderPlayPaused(std::unique_ptr<Serial_Engine> &fractal_engine);
 
-    void renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine, ImVec2 buttonPos);
+    void renderRandomizeButton(std::unique_ptr<Serial_Engine> &fractal_engine, ImVec2 buttonPos);
 
-    bool renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture);
+    bool renderUITab(std::unique_ptr<Serial_Engine> &fractal_engine, GLuint &flameTexture);
 
-    bool renderTransformTab(std::unique_ptr<Engine> &fractal_engine);
+    bool renderTransformTab(std::unique_ptr<Serial_Engine> &fractal_engine);
     
-    void renderRandomTab(std::unique_ptr<Engine> &fractal_engine);
+    void renderRandomTab(std::unique_ptr<Serial_Engine> &fractal_engine);
 
     // refactor this in the future
     const ImGuiWindowFlags button_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
@@ -117,7 +117,7 @@ struct UIState {
     }
 };  
 
-std::unique_ptr<Engine> selectBackend(int selection, int numThreads = std::max(1, omp_get_num_procs() - 8)) {
+std::unique_ptr<Serial_Engine> selectBackend(int selection, int numThreads = std::max(1, omp_get_num_procs() - 8)) {
     switch(selection) {
         case 1: { // Serial
             return std::make_unique<Serial_Engine>();
@@ -139,14 +139,14 @@ std::unique_ptr<Engine> selectBackend(int selection, int numThreads = std::max(1
 }
 GLuint flameTexture = 0; // global Texture id
 
-void uploadHistogram(std::unique_ptr<Engine>& fractal_engine, UIState &ui, double gamma);
+void uploadHistogram(std::unique_ptr<Serial_Engine>& fractal_engine, UIState &ui, double gamma);
 
 struct Preset {
     std::string displayName = "None"; // name for the preset - displayed in ImGui
     EngineState engineState;
     std::vector<Color> funcColors;
 
-    void applyPreset(std::unique_ptr<Engine>& fractal_engine, UIState& ui) {
+    void applyPreset(std::unique_ptr<Serial_Engine>& fractal_engine, UIState& ui) {
         ui.applyPreset(funcColors);
         fractal_engine->applyPreset(engineState);
     }
@@ -237,7 +237,7 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
     
-    std::unique_ptr<Engine> fractal_engine = selectBackend(ui.selectedBackend);
+    std::unique_ptr<Serial_Engine> fractal_engine = selectBackend(ui.selectedBackend);
 
     std::vector<VariationDef> vars = fractal_engine->getSupportedVariations();
     ui.supportedVariations.resize(vars.size());
@@ -462,7 +462,7 @@ int main() {
     return 0;
 }
 
-void uploadHistogram(std::unique_ptr<Engine> &fractal_engine, UIState &ui, double gamma) { // function to push the global_histogram to opengl
+void uploadHistogram(std::unique_ptr<Serial_Engine> &fractal_engine, UIState &ui, double gamma) { // function to push the global_histogram to opengl
     if(!fractal_engine) return;
     static std::vector<uint8_t> pixels;
     int width = fractal_engine->getHistogram().getWidth();
@@ -485,7 +485,7 @@ void uploadHistogram(std::unique_ptr<Engine> &fractal_engine, UIState &ui, doubl
 //////// UI TABS ////////
 /////////////////////////
 
-void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
+void UIState::renderDebug(std::unique_ptr<Serial_Engine> &fractal_engine){
     if(!fractal_engine) return; // guard just in case
 
     const double trackingTime = 5.0; // 5 seconds - might be changable by user in future
@@ -542,7 +542,7 @@ void UIState::renderDebug(std::unique_ptr<Engine> &fractal_engine){
     }
 }
 
-void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool &settingsOpen) {
+void UIState::renderSettingsButton(std::unique_ptr<Serial_Engine> &fractal_engine, bool &settingsOpen) {
     ImGui::Begin("##settingsButton", nullptr, button_flags);
     if(fractal_engine && fractal_engine->getStatus()) {
         ImGui::BeginDisabled();
@@ -558,7 +558,7 @@ void UIState::renderSettingsButton(std::unique_ptr<Engine> &fractal_engine, bool
     ImGui::End();
 }
 
-void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos) {
+void UIState::renderQuickEdit(std::unique_ptr<Serial_Engine> &fractal_engine, UIState &ui, ImVec2 buttonPos) {
     static bool quickEditOpen = false;
     
     if(!fractal_engine) return; // guard against fractal_engine not existing
@@ -606,7 +606,7 @@ void UIState::renderQuickEdit(std::unique_ptr<Engine> &fractal_engine, UIState &
     }
 }
 
-void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
+void UIState::renderPlayPaused(std::unique_ptr<Serial_Engine> &fractal_engine) {
     ImGui::Begin("##playPause", nullptr, button_flags);
     if(fractal_engine) {
         if(fractal_engine->getStatus()) {
@@ -628,7 +628,7 @@ void UIState::renderPlayPaused(std::unique_ptr<Engine> &fractal_engine) {
     ImGui::End();
 }
 
-void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine, ImVec2 buttonPos) {
+void UIState::renderRandomizeButton(std::unique_ptr<Serial_Engine> &fractal_engine, ImVec2 buttonPos) {
     // if(fractal_engine && fractal_engine->getStatus()) {
     //     ImGui::BeginDisabled();
     // }
@@ -651,7 +651,7 @@ void UIState::renderRandomizeButton(std::unique_ptr<Engine> &fractal_engine, ImV
     // }
 }
 
-bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flameTexture) {
+bool UIState::renderUITab(std::unique_ptr<Serial_Engine> &fractal_engine, GLuint &flameTexture) {
     if(ImGui::BeginTabItem("UI")) {
         // histogram width, height
         // viewport width, height
@@ -724,7 +724,7 @@ bool UIState::renderUITab(std::unique_ptr<Engine> &fractal_engine, GLuint &flame
     }
 }
 
-bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine) {
+bool UIState::renderTransformTab(std::unique_ptr<Serial_Engine> &fractal_engine) {
     if(ImGui::BeginTabItem("Transforms")) {
         if(!fractal_engine) {
             ImGui::BeginDisabled();
@@ -846,7 +846,7 @@ bool UIState::renderTransformTab(std::unique_ptr<Engine> &fractal_engine) {
     }
 }
 
-void UIState::renderPresetsWindow(std::unique_ptr<Engine> &fractal_engine, std::vector<Preset> &presets) {
+void UIState::renderPresetsWindow(std::unique_ptr<Serial_Engine> &fractal_engine, std::vector<Preset> &presets) {
     if(ImGui::BeginTabItem("Presets")) {
         size_t numPresets = presets.size();
 
@@ -864,7 +864,7 @@ void UIState::renderPresetsWindow(std::unique_ptr<Engine> &fractal_engine, std::
     }; 
 }
 
-void UIState::renderRandomTab(std::unique_ptr<Engine> &fractal_engine) {
+void UIState::renderRandomTab(std::unique_ptr<Serial_Engine> &fractal_engine) {
     if(ImGui::BeginTabItem("Randomize")) {
         if(ImGui::Button("Randomize!")) {
             int colorSeed = fractal_engine->randomize();

@@ -1,17 +1,19 @@
 #pragma once
 #include "./engine.h"
 #include <cuda_runtime.h>
+#include <thread>
 
 class CUDA_Engine : public Engine {
 public:
     uint64_t* d_histHits = nullptr;    // GPU histogram hits
-    double* d_histColors = nullptr;    // GPU histogram colors
+    float* d_histColors = nullptr;    // GPU histogram colors
     Transform* d_transforms = nullptr; // GPU transforms
     uint64_t* d_seeds = nullptr;       // GPU RNG seeds per thread
-    std::thread workingThread;
-    std::atomic<bool> running = false;
-    int numThreads;
+    int numThreads = 1024;
+    int threadsPerBlock = 256; // tweakable launch config
+    uint64_t totalIterationsCompleted = 0; // set by start() after kernel finishes
 
+    std::thread workingThread;
 
 
 
@@ -22,14 +24,14 @@ public:
     ~CUDA_Engine();
 
     /// @brief Sets up CUDA kernels, allocating memory and copying arrays over to CUDA
-    /// @param desiredThreads 1024 threads by default (RTX 4070 Super has )
+    /// @param desiredThreads 1024 threads by default
     void setup(int desiredThreads) override; 
 
     /// @brief Not used in CUDA engine.
     /// @param c 
     /// @param threadIndex 
     /// @param rng 
-    void step(Coordinate c, int threadIndex, Xorshift64 &rng) override;
+    void step(Coordinate c, int threadIndex, Xorshift64 &rng) ;
 
     /// @brief Not used in CUDA engine.
     /// @param c 
@@ -41,10 +43,7 @@ public:
     /// @return 
     std::vector<VariationDef> getSupportedVariations() override;
     
-    /// @brief 
-    /// @param threadIndex 
-    /// @return 
-    Coordinate getStartingCoordinate(int threadIndex) override;
+    bool done() override;
 
     /// @brief 
     void start();

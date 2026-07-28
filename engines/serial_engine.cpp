@@ -1,5 +1,9 @@
 #include "./engine.h"
-
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <random>
+#include <iostream>
 
 
 
@@ -11,7 +15,25 @@ class Serial_Engine : public Engine {
         std::vector<std::unique_ptr<Xorshift64>> rngs; 
         std::thread workingThread;
         std::vector<Histogram<PixelData>> localHistograms;
-        int numThreads = 1; // desired threads
+        int numThreads = 1; // desired threads 
+        std::vector<Coordinate> threadCoords;
+        
+        std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
+        std::chrono::system_clock::time_point startWallTime = std::chrono::system_clock::now();
+        
+
+        void recordStartTime() {
+			startTime = std::chrono::steady_clock::now();
+			startWallTime = std::chrono::system_clock::now();
+    	}
+        
+        void recordEndTime() {
+			std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
+            std::chrono::duration<double> runLength = endTime - startTime;
+            logLevel(LOG_LIFECYCLE, "Stopping serial engine...\r\n");
+            logLevel(LOG_SUMMARY, "Run length was %.2f seconds.\r\n", runLength.count());
+            logLevel(LOG_SUMMARY, "This is an average of %.1f iterations/sec.\r\n", getTotalIterations() / runLength.count());
+        }
 
     public:
         Serial_Engine() : Engine() {
@@ -47,9 +69,15 @@ class Serial_Engine : public Engine {
             return maxHistogramBin.hits;
         }
 
+        virtual int getMaxThreads() { 
+			return 1;
+		}
+
+        virtual int setThreads(int desiredThreadCount) { return 1; }
+
 
         void setup(int numThreads = 1) {
-            printf("setup(%d) called, setting this->numThreads = %d\r\n", numThreads, numThreads);
+            logLevel(LOG_CHATTER, "setup(%d) called, setting this->numThreads = %d\r\n", numThreads, numThreads);
             std::random_device slowRNG;
             uint64_t seed = ((uint64_t)slowRNG() << 32) | slowRNG(); // random 64 bit number
             
@@ -71,28 +99,29 @@ class Serial_Engine : public Engine {
         void start() {
             recordStartTime(); // for logging for data -- I plan on lots of data collection
             running = true;
-            printf("Spawning worker...\r\n");
+            logLevel(LOG_CHATTER, "Spawning worker...\r\n");
             workingThread = std::thread(&Serial_Engine::workerLoop, this);
-            printf("Thread spawned -- running = %d\r\n", (bool) running);
+            logLevel(LOG_CHATTER, "Thread spawned -- running = %d\r\n", (bool) running);
         }
 
         void stop() {
             running = false;
             if(workingThread.joinable()) {
-                printf("Joining working thread.\r\n");
+                logLevel(LOG_CHATTER, "Joining working thread.\r\n");
                 workingThread.join();
-                printf("workingThread is no longer joinable.\r\n");
+                logLevel(LOG_CHATTER, "workingThread is no longer joinable.\r\n");
             }
             recordEndTime();
         }
 
         void reset() { // called when setTransforms is reset
-            printf("Resetting!\r\n");
+            logLevel(LOG_CHATTER, "Resetting!\r\n");
             if(running) {
                 stop();
             }
             
         }
+        
         
         Coordinate stepNoPlot(Coordinate c, Xorshift64 &rng) {
             int func = pickFunction(rng);
@@ -190,7 +219,7 @@ class Serial_Engine : public Engine {
 
             return supportedVariations;
         }
-
+    
     protected:
         int pickFunction(Xorshift64 &rng) {
             double i = rng.getDouble() * getTotalWeight(); // a number from 0 to totalWeight
@@ -383,7 +412,7 @@ class Serial_Engine : public Engine {
             // serial engine
             int threadIndex = 0; // will be obtained programatically from OpenMP or CUDA
             Coordinate* currentThreadCoordinate = &threadCoords[threadIndex];
-            printf("Worker loop started.\r\n");
+            logLevel(LOG_CHATTER, "Worker loop started.\r\n");
             // iterationCounters.clear(); // clear sets size to 0
             std::fill(iterationCounters.begin(), iterationCounters.end(), 0); 
             for(int i = 0; i < 20; i++) {
@@ -395,7 +424,7 @@ class Serial_Engine : public Engine {
                 this->step(*currentThreadCoordinate, threadIndex, *rngs[threadIndex]);
                 iterationCounters[threadIndex]++;
             }
-            printf("Worker loop ended.\r\n");
+            logLevel(LOG_CHATTER, "Worker loop ended.\r\n");
         }
 };
 
