@@ -43,9 +43,13 @@ if(EMSCRIPTEN)
     target_link_options(flame_web PRIVATE
         # -sALLOW_MEMORY_GROWTH=1 # this breaks the randomization 
         -sINITIAL_MEMORY=268435456
+        -sEXPORTED_FUNCTIONS=_main,_apply_seed
+        -sEXPORTED_RUNTIME_METHODS=ccall,cwrap
         --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html
     )
-    set_target_properties(flame_web PROPERTIES SUFFIX ".html")
+    set_target_properties(flame_web PROPERTIES 
+                        SUFFIX ".html"
+                        LINK_DEPENDS "${CMAKE_SOURCE_DIR}/web/shell.html")
 
 else() 
 
@@ -76,10 +80,9 @@ if(CUDAToolkit_FOUND)
         find_program(CMAKE_CUDA_COMPILER nvcc) # fallback to system PATH
     endif()
 
-
+    set(CMAKE_CUDA_ARCHITECTURES native)
     enable_language(CUDA)
     set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_ARCHITECTURES native)
 else()
     message(STATUS "CUDA not found -- building CPU-only")
 endif()

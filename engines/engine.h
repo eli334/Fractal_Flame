@@ -1,7 +1,7 @@
 #pragma once
 #include "./types.h"
 #include <atomic>
-#include <random>
+
 
 
 #ifndef FLAME_VARIATIONS
@@ -353,47 +353,42 @@ class Engine {
 		}
 
 		int randomize(int randomSeed) {
-			std::uniform_int_distribution<int> transformCountDist(2, 8);
-
 			std::mt19937 rng(randomSeed);
-            int numRandTransforms = transformCountDist(rng);
-            
+			int numRandTransforms = uniformIntI(rng, 2, 8);
+
 			logLevel(LOG_CHATTER, "seed is %d, numTransforms = %d\r\n", randomSeed, numRandTransforms);
 
-			
-			
-			std::vector<VariationDef> allowedVariations = getSupportedVariations(); // all for now -- might make checkboxes
-
-
-			std::uniform_real_distribution<float> weightDist(0.5f, 2.0f);
-			std::uniform_real_distribution<float> colorDist(0, 1);
-			std::uniform_real_distribution<double> affineDist(-1.0, 1.0);
-			std::uniform_real_distribution<double> parametricDist(-3.0, 3.0);
-			
-			std::uniform_int_distribution<int> varRandIndex(0, allowedVariations.size() - 1); //
-			
+			std::vector<VariationDef> allowedVariations = getSupportedVariations();
+			int lastVar = (int)allowedVariations.size() - 1;
 
 			std::vector<Transform> randomTransforms;
-			for(int i = 0; i < numRandTransforms; i++) {
-				int transformIndex = varRandIndex(rng);
+			for (int i = 0; i < numRandTransforms; i++) {
+				int transformIndex = uniformIntI(rng, 0, lastVar);
 
 				Transform t;
-				
-				t.weight = weightDist(rng);
-				t.color = colorDist(rng);
-				
+				t.weight = uniformRealF(rng, 0.5f, 2.0f);
+				t.color  = uniformRealF(rng, 0, 1);
 				t.variation = allowedVariations[transformIndex];
-	
 
-				t.coeffs = Affine(affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng));
-				t.parametric = Parametric(parametricDist(rng), parametricDist(rng), parametricDist(rng), parametricDist(rng)); // all transforms get 4 random parametric coeffs, even if they don't use them
-				randomTransforms.push_back(t); 
+				// constructor arg order was RTL -- last arg drew first. draw f..a, p4..p1.
+				Affine aff;
+				aff.f = uniformRealD(rng, -1.0, 1.0); aff.e = uniformRealD(rng, -1.0, 1.0);
+				aff.d = uniformRealD(rng, -1.0, 1.0); aff.c = uniformRealD(rng, -1.0, 1.0);
+				aff.b = uniformRealD(rng, -1.0, 1.0); aff.a = uniformRealD(rng, -1.0, 1.0);
+				t.coeffs = aff;
+
+				Parametric par;
+				par.p4 = uniformRealD(rng, -3.0, 3.0); par.p3 = uniformRealD(rng, -3.0, 3.0);
+				par.p2 = uniformRealD(rng, -3.0, 3.0); par.p1 = uniformRealD(rng, -3.0, 3.0);
+				t.parametric = par;
+
+				randomTransforms.push_back(t);
 			}
 
 			setTransforms(randomTransforms);
 			stats = analyzeFlame(transforms);
 			calculateViewport();
-			return rng();
+			return rng(); // color seed -- raw mt19937 output, portable
 		}
 
 
@@ -467,18 +462,15 @@ struct ColorState {
     }
 
     void randomizeColors(int numTransforms, int seed) {
-        std::uniform_real_distribution<double> satDist(0.7f, 1.0f);
-		std::uniform_real_distribution<double> valDist(0.7f, 1.0f);
-		std::mt19937 rng(seed); // pseudorandom -- good enough
+        std::mt19937 rng(seed);
 		funcColors.resize(numTransforms);
-		for(int i = 0; i < numTransforms; i++) {
-			double hue = (double)i / numTransforms; // evenly spaced hues [0, 1]
-			double saturation = satDist(rng);
-			double value = valDist(rng);
-			funcColors[i] = Color::hsvToRGB(hue, saturation, value);
-            logLevel(LOG_CHATTER, "funcColors[i] = {%u, %u, %u}\r\n", funcColors[i].r, funcColors[i].g, funcColors[i].b);
-		}
-		buildPalette();
+		for (int i = 0; i < numTransforms; i++) {
+			double hue = (double)i / numTransforms;
+			double saturation = uniformRealD(rng, (double)0.7f, (double)1.0f); // (double).7f because of legacy reasons; will make this a breaking change with the rest of the overhaul
+			double value      = uniformRealD(rng, (double)0.7f, (double)1.0f);
+        	funcColors[i] = Color::hsvToRGB(hue, saturation, value);
+    	}
+    	buildPalette();
     }
 
     void buildPalette() {

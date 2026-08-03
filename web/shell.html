@@ -20,10 +20,26 @@
             touch-action: none;       /* stop the browser from panning/zooming the page itself on touch drag */
             image-rendering: pixelated; /* keep individual histogram bins crisp -- matches the desktop app's zoom-to-see-bins behavior */
         }
+        #seed {
+            position: fixed;
+            top: 12px; left: 12px;
+            width: 8em;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            font: 14px monospace;
+            outline: none;
+            -webkit-appearance: none;   /* kill the iOS spinner/inset look */
+        }
+#seed::placeholder { color: rgba(255,255,255,0.4); }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
+
+    <input id="seed" inputmode="numeric" placeholder="seed" autocomplete="off">
 
     <script>
         // Pan/zoom input state, polled and drained once per frame by
@@ -35,27 +51,54 @@
         var panDX = 0, panDY = 0, zoomDelta = 0;
         var dragging = false, lastX = 0, lastY = 0;
 
-        var canvasEl = document.getElementById('canvas');
+        var canvasElement = document.getElementById('canvas');
 
-        canvasEl.addEventListener('pointerdown', function (e) {
-            dragging = true;
-            lastX = e.clientX;
-            lastY = e.clientY;
-            canvasEl.setPointerCapture(e.pointerId);
+        var pointers = new Map(); // pointerId -> {x, y}
+        var lastDist = 0;         // finger spacing on the previous pinch frame
+
+        function pinchDist() {
+            var it = pointers.values(); // it is an iterator of the pointers map
+            var a = it.next().value, b = it.next().value; // a, b; finger (x, y) positions
+            var dx = a.x - b.x, dy = a.y - b.y; // distance between fingers gives pinchDist
+            return Math.hypot(dx, dy);
+        }
+
+        canvasElement.addEventListener('pointerdown', function (e) {
+            console.log("click!")
+            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            canvasElement.setPointerCapture(e.pointerId);
+            if (pointers.size === 2) lastDist = pinchDist();
+        });
+        
+
+        canvasElement.addEventListener('pointermove', function (e) {
+            if (!pointers.has(e.pointerId)) return;            // no finger: return
+            var p = pointers.get(e.pointerId);
+
+            if (pointers.size === 1) {                         // one finger: pan
+                panDX += e.clientX - p.x;
+                panDY += e.clientY - p.y;
+            } else if (pointers.size === 2) {                  // two fingers: pinch
+                var d = pinchDist();
+                if (lastDist !== 0) zoomFactor *= d / lastDist;
+                lastDist = d;
+            }
+
+            p.x = e.clientX;                                   // update the pointer's position
+            p.y = e.clientY;
         });
 
-        canvasEl.addEventListener('pointermove', function (e) {
-            if (!dragging) return;
-            panDX += e.clientX - lastX;
-            panDY += e.clientY - lastY;
-            lastX = e.clientX;
-            lastY = e.clientY;
-        });
+        function endPointer(e) {
+            console.log("pointer ending")
+            pointers.delete(e.pointerId);
+            lastDist = 0;
+        }
 
-        canvasEl.addEventListener('pointerup', function (e) { dragging = false; });
-        canvasEl.addEventListener('pointercancel', function (e) { dragging = false; });
+        canvasElement.addEventListener('pointerup', endPointer);
 
-        canvasEl.addEventListener('wheel', function (e) {
+        canvasElement.addEventListener('pointercancel', endPointer);
+
+        canvasElement.addEventListener('wheel', function (e) {
             e.preventDefault();
             // Scale chosen to roughly match the native app's `wheel * 0.1` feel:
             // most mice report ~100 units of deltaY per notch, so 0.001 per unit
@@ -65,11 +108,20 @@
             zoomDelta += -e.deltaY * 0.001;
         }, { passive: false });
 
+
         var Module = {
-            canvas: canvasEl,
+            canvas: canvasElement,
             print: function (text) { console.log(text); },
             printErr: function (text) { console.error(text); }
         };
+        
+        var seedEl = document.getElementById('seed');
+        seedEl.addEventListener('change', function () {   // fires on losing focus + Enter
+            var v = parseInt(seedEl.value, 10);
+            if (Module._apply_seed && !Number.isNaN(v)) Module._apply_seed(v);  // into WASM
+            seedEl.blur();                                 // dismiss the keypad
+        });
+
     </script>
 
     {{{ SCRIPT }}}

@@ -13,6 +13,8 @@
 #include <unistd.h>	  // i just wanted colors man
 #include <set>		  // for flame variations; cleanest way I could find
 
+#include "./variations/portable_rand.h" // included here because types is included correctly, therefore this should be too
+
 #ifdef __CUDACC__
 #define FLAME_FUNC __host__ __device__
 #define FLAME_FUNC_HOST __host__
