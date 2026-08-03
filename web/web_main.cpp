@@ -11,6 +11,7 @@
 // JS glue -- raw <canvas> 2D + putImageData, no WebGL. fillPixelBuffer() returns
 // RGBA8 already in ImageData layout, so the blit is just a byte copy.
 // Pan/zoom is read from plain JS globals set in shell.html
+// Pan/zoom is read from plain JS globals set in shell.html
 
 EM_JS(void, js_resize_canvas, (int width, int height), {
     const canvas = document.getElementById('canvas');
@@ -43,6 +44,23 @@ EM_JS(void, js_write_seed, (uint32_t seed), {
     if (el) el.value = seed;
 });
 
+// read seed from url hash (#12345). returns 0 and sets *ok=0 if absent/bad.
+EM_JS(int, js_read_seed, (int* ok), {
+    const h = window.location.hash.slice(1);
+    if (h.length === 0) { HEAP32[ok >> 2] = 0; return 0; }
+    const n = parseInt(h, 10);
+    if (Number.isNaN(n)) { HEAP32[ok >> 2] = 0; return 0; }
+    HEAP32[ok >> 2] = 1;
+    return n >>> 0; // unsigned -- hash carries a uint32
+});
+
+// write seed to url hash + the seed input field, without adding history entries
+EM_JS(void, js_write_seed, (uint32_t seed), {
+    history.replaceState(null, '', '#' + seed);
+    const el = document.getElementById('seed');
+    if (el) el.value = seed;
+});
+
 EM_JS(double, js_take_pan_dx, (), { const v = panDX; panDX = 0; return v; });
 EM_JS(double, js_take_pan_dy, (), { const v = panDY; panDY = 0; return v; });
 EM_JS(double, js_take_zoom_delta, (), { const v = zoomDelta; zoomDelta = 0; return v; });
@@ -51,6 +69,7 @@ EM_JS(double, js_take_zoom_delta, (), { const v = zoomDelta; zoomDelta = 0; retu
 struct AppState {
     std::unique_ptr<Web_Engine> engine;
     ColorState colorState;
+    Camera view; // display-time pan/zoom -- not the accumulated Viewport, so
     Camera view; // display-time pan/zoom -- not the accumulated Viewport, so
                  // panning never wipes the histogram, just re-crops it
     std::vector<uint8_t> pixels;
@@ -75,10 +94,22 @@ struct AppState {
     }
 };
 static AppState* g_app = nullptr;
+    static constexpr uint64_t maxIterationsPerFrame = 200'000'000;
+
+    void applySeed(int seed) {
+        engine->stop();
+        int colorSeed = engine->randomize(seed);
+        colorState.randomizeColors(engine->getTransforms().size(), colorSeed);
+        view = Camera{};
+        engine->start();
+        js_write_seed(static_cast<uint32_t>(seed));
+    }
+};
+static AppState* g_app = nullptr;
 
 void main_loop(void* arg) {
     AppState* app = static_cast<AppState*>(arg); // heap allocated in main, so it doesn
-    g_app = app;
+    
     // 1. Drain input accumulated since last frame, apply to the display Camera.
     double panDX = js_take_pan_dx();
     double panDY = js_take_pan_dy();
@@ -131,8 +162,11 @@ void main_loop(void* arg) {
 int main() {
     // heap-allocated, never freed
     // allocated now and fed into void* in emscripten_set_main_loop_arg
+    // heap-allocated, never freed
+    // allocated now and fed into void* in emscripten_set_main_loop_arg
     AppState* app = new AppState();
-
+    g_app = app;
+    
     app->engine = std::make_unique<Web_Engine>();
 
     // same as the native "Randomize!" -- 2-8 random transforms, estimated
@@ -157,6 +191,14 @@ int main() {
     }
     app->applySeed(seed); // does randomize + colors + start + writes url
     
+    int ok = 0;
+    int seed = js_read_seed(&ok);
+    if (!ok) {
+        std::random_device entropyGenerator;
+        seed = static_cast<int>(entropyGenerator());
+    }
+    app->applySeed(seed); // does randomize + colors + start + writes url
+    
     emscripten_set_main_loop_arg(main_loop, app, 0, EM_TRUE);
 
     return 0; // unreachable
@@ -164,5 +206,5 @@ int main() {
 
 
 extern "C" EMSCRIPTEN_KEEPALIVE void apply_seed(int seed) {
-    g_app->applySeed(seed);
+    if(g_app) g_app->applySeed(seed);
 }
