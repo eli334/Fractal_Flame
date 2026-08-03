@@ -24,6 +24,7 @@ struct EngineState {
 	std::vector<Transform> transforms;
 	bool hasFinalTransform = false;
 	Transform finalTransform;
+	FlameStats stats;
 
 	void applyPreset(std::unique_ptr<Engine>& fractal_engine);
 }; 
@@ -41,7 +42,8 @@ class Engine {
 		Transform finalTransform;
 		
 		Histogram<PixelData> globalHistogram;
-		
+
+		FlameStats stats;		
 
 		int seed = 0;
 		
@@ -50,6 +52,8 @@ class Engine {
 
 			calculateWeight();
 			recalculateColors();
+			stats = analyzeFlame(transforms);
+			logLevel(LOG_LIFECYCLE, "Flame analyzed. Stats are %s\r\n", stats.toString().c_str());
 		}
 
 	private:
@@ -200,14 +204,14 @@ class Engine {
 			globalHistogram.resize(width, height);
 		}
 
-		/** might refactor with Doxygen next -- I like good documentation, and this entire project lacks that
+		/** 
 		// @brief fills pixels[] with RGBA data
 		// @param pixels must point to a buffer of at least Engine*->getWidth() * Engine*->getHeight() * 4 bytes
 		// @param UIState.color.palette must have (paletteSize * 3 bytes per color) bytes allocated
 		// @returns Returns true if buffer changed, false if no change
 		*/
-		bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma, const Camera &view) { // function to calculate colors for texture, returns false if no change
-			if(!getStatus()) return false; // if it isn't running, then the buffer is not changing
+		bool fillPixelBuffer(uint8_t* pixels, const Color* palette, int paletteSize, double gamma, const Camera &view, bool force = false) { // function to calculate colors for texture, returns false if no change
+			if(!force && !getStatus()) return false; // if it isn't running, then the buffer is not changing
 			
 			static uint64_t lastMaxVal = 0;
 			uint64_t maxVal = 0;
@@ -220,12 +224,13 @@ class Engine {
 				}
 			}
 			if(maxVal == 0) return false; // don't render when nothing has generated yet
-			if(lastMaxVal == maxVal) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
+			if(!force && lastMaxVal == maxVal) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
 						
 			double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double, with 1.0 because log(0) is undefined
 			
 			static std::vector<double> logTable;
 
+			
 			if(maxVal != lastMaxVal) {
 				logTable.resize(maxVal + 1);
 				for(uint64_t i = lastMaxVal + 1; i <= maxVal; i++) {
@@ -352,11 +357,13 @@ class Engine {
 
 			std::mt19937 rng(randomSeed);
             int numRandTransforms = transformCountDist(rng);
-            logLevel(LOG_CHATTER, "seed is %d, numTransforms = %d\r\n", randomSeed, numRandTransforms);
+            
+			logLevel(LOG_CHATTER, "seed is %d, numTransforms = %d\r\n", randomSeed, numRandTransforms);
 
+			
+			
 			std::vector<VariationDef> allowedVariations = getSupportedVariations(); // all for now -- might make checkboxes
-			
-			
+
 
 			std::uniform_real_distribution<float> weightDist(0.5f, 2.0f);
 			std::uniform_real_distribution<float> colorDist(0, 1);
@@ -364,7 +371,6 @@ class Engine {
 			std::uniform_real_distribution<double> parametricDist(-3.0, 3.0);
 			
 			std::uniform_int_distribution<int> varRandIndex(0, allowedVariations.size() - 1); //
-			std::uniform_int_distribution<uint8_t> RGBColor(180, 255);
 			
 
 			std::vector<Transform> randomTransforms;
@@ -376,8 +382,8 @@ class Engine {
 				t.weight = weightDist(rng);
 				t.color = colorDist(rng);
 				
-				t.variation.index = allowedVariations[transformIndex].index; 	// coded like this so I can easily change allowedVariations
-				t.variation.name = allowedVariations[transformIndex].name;		// right now it's all of them, but eventually i will implement tags
+				t.variation = allowedVariations[transformIndex];
+	
 
 				t.coeffs = Affine(affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng), affineDist(rng));
 				t.parametric = Parametric(parametricDist(rng), parametricDist(rng), parametricDist(rng), parametricDist(rng)); // all transforms get 4 random parametric coeffs, even if they don't use them
@@ -385,9 +391,12 @@ class Engine {
 			}
 
 			setTransforms(randomTransforms);
+			stats = analyzeFlame(transforms);
 			calculateViewport();
 			return rng();
 		}
+
+
 	
 	
 };

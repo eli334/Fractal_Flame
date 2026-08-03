@@ -4,3 +4,4 @@
 imgui.ini
 build-web/
 compile_commands.json
+*.py

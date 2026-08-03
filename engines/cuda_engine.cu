@@ -26,7 +26,7 @@ void CUDA_Engine::setup(int desiredThreads) {
     // get free and total memory on GPU
     size_t freeMem, totalMem;
     cudaMemGetInfo(&freeMem, &totalMem);
-    logLevel(LOG_LIFECYCLE, "Pre-malloc:  CUDA free: %zu MB / %zu MB total\n", freeMem / (1024*1024), totalMem / (1024*1024));
+    logLevel(LOG_CHATTER, "Pre-malloc:  CUDA free: %zu MB / %zu MB total\n", freeMem / (1024*1024), totalMem / (1024*1024));
 
     // allocate GPU histogram
     cudaMalloc(&d_histHits,   histSize * sizeof(uint64_t));
@@ -48,7 +48,7 @@ void CUDA_Engine::setup(int desiredThreads) {
                cudaMemcpyHostToDevice);
     
     cudaMemGetInfo(&freeMem, &totalMem);
-    logLevel(LOG_LIFECYCLE, "Post-malloc: CUDA free: %zu MB / %zu MB total\n", freeMem / (1024*1024), totalMem / (1024*1024));
+    logLevel(LOG_CHATTER, "Post-malloc: CUDA free: %zu MB / %zu MB total\n", freeMem / (1024*1024), totalMem / (1024*1024));
 
     // seed RNGs -- one per GPU thread
     std::vector<uint64_t> seeds(numThreads);

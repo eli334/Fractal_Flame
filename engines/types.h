@@ -11,7 +11,7 @@
 #include <memory>     // std::unique_ptr
 #include <cstdarg>    // va_list, va_start, va_end in logLevel()
 #include <unistd.h>	  // i just wanted colors man
-
+#include <set>		  // for flame variations; cleanest way I could find
 
 #ifdef __CUDACC__
 #define FLAME_FUNC __host__ __device__
@@ -22,7 +22,7 @@
 #endif
 
 #ifndef LOG_LEVEL
-#define LOG_LEVEL 2
+#define LOG_LEVEL 1
 #endif
 
 
@@ -53,11 +53,11 @@ FLAME_FUNC_HOST inline void logLevel(int tier, const char* fmt, ...) { // unknow
 	if(useColor()) {
 		const char* color = "";
 		switch (tier) {
-			case LOG_SILENT:	color = ""; 		break;
-			case LOG_SUMMARY:   color = "\033[32m"; break; // green — results
-			case LOG_LIFECYCLE: color = "\033[36m"; break; // cyan — events
-			case LOG_CHATTER:   color = "\033[90m"; break; // grey — noise
-			default:            color = "";         break;
+			case LOG_SILENT:	color = "\033[31m"; break; // red 	- errors / things I'm specifically looking for in debugging
+			case LOG_SUMMARY:   color = "\033[32m"; break; // green - results
+			case LOG_LIFECYCLE: color = "\033[36m"; break; // cyan 	- events
+			case LOG_CHATTER:   color = "\033[90m"; break; // grey 	- noise
+			default:            color = "\033[34m"; break; // blue 	- typed logLevel wrong
     	}
 		printf("%s", color);
 	}
@@ -382,3 +382,75 @@ struct Xorshift64 {
         return (next() >> 11) * (1.0 / (1ULL << 53)); // discards bottom 11 bits, making it a uint64_t from [0, 2^53-1]
     }												  // then, multiplies by (1/2^53), mapping it from [0, 1) -- this is effectively [0, 1]
 };
+
+
+
+
+inline double variationCost(uint32_t tags) {
+    double cost = 1.0;                          // SIMPLE arithmetic baseline (+-x/)
+    if(tags & vtag::TRIG)       cost += 4.0;    // sin/cos/tan
+    if(tags & vtag::EXP)        cost += 5.0;    // e^x
+    if(tags & vtag::LOG)        cost += 5.0;    // log/log10
+    if(tags & vtag::HYPER)      cost += 8.0;    // sinh/cosh (via exp)
+    if(tags & vtag::POW)        cost += 10.0;    // pow = exp(e·ln b), heaviest
+    if(tags & vtag::STOCHASTIC) cost += 2.0;    // extra RNG draws
+    return cost;
+}
+ 
+struct FlameStats {
+    size_t   numTransforms = 0;
+    int      numDistinct   = 0;   // distinct variation indices ()
+    uint32_t tagMask       = 0;   // OR of every variation's tags -- slice on this in Pandas
+    double   workExpected  = 0.0; // weighted average cost of the one branch taken
+    double   workDistinct  = 0.0; // sum of cost over the distinct branches present 
+
+	static std::string header() {
+		return {"numTransforms,numDistinct,tagMask,workExpected,workDistinct"};
+	}
+
+	std::string formattedOutput = "default overwritten";
+
+	void formatOutput() {
+		std::stringstream stream;
+		stream << numTransforms << ","
+			   << numDistinct 	<< "," 
+			   << tagMask 		<< ","
+			   << workExpected 	<< "," 
+			   << workDistinct;
+		stream >> formattedOutput;
+	}
+
+	std::string toString() const {
+		return formattedOutput.c_str();
+	}
+};
+ 
+inline FlameStats analyzeFlame(const std::vector<Transform>& transforms) {
+    FlameStats stats;
+    stats.numTransforms = transforms.size();
+ 
+    double totalWeight = 0.0;
+    for(size_t i = 0; i < transforms.size(); i++) {
+        totalWeight += transforms[i].weight;
+    }
+    if(totalWeight <= 0.0) totalWeight = 1.0; // guard against transforms somehow adding to <1
+ 
+    std::set<int> distinctVariations;
+    for(size_t i = 0; i < transforms.size(); i++) {
+        const Transform& t = transforms[i];
+        double cost = variationCost(t.variation.tags);
+ 
+        stats.tagMask |= t.variation.tags;
+        stats.workExpected += (t.weight / totalWeight) * cost;
+ 
+        if(distinctVariations.insert(t.variation.index).second) { // returns a pair: (iterator to inserted element, bool) (true if it's a unique addition)
+            stats.workDistinct += cost;
+        }
+    }
+    stats.numDistinct = (int)distinctVariations.size();
+    
+	stats.formatOutput();
+	logLevel(LOG_CHATTER, "Flame analyzed; %s\r\n", stats.toString().c_str());
+	return stats;
+}
+ 

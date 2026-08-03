@@ -30,7 +30,7 @@ class Serial_Engine : public Engine {
         void recordEndTime() {
 			std::chrono::steady_clock::time_point endTime = std::chrono::steady_clock::now();
             std::chrono::duration<double> runLength = endTime - startTime;
-            logLevel(LOG_LIFECYCLE, "Stopping serial engine...\r\n");
+            logLevel(LOG_CHATTER, "Stopping serial engine...\r\n");
             logLevel(LOG_SUMMARY, "Run length was %.2f seconds.\r\n", runLength.count());
             logLevel(LOG_SUMMARY, "This is an average of %.1f iterations/sec.\r\n", getTotalIterations() / runLength.count());
         }
@@ -105,7 +105,7 @@ class Serial_Engine : public Engine {
         void start() {
             recordStartTime(); // for logging for data -- I plan on lots of data collection
             running = true;
-            logLevel(LOG_CHATTER, "Spawning worker...\r\n");
+            logLevel(LOG_LIFECYCLE, "Spawning serial worker...\r\n");
             workingThread = std::thread(&Serial_Engine::workerLoop, this);
             logLevel(LOG_CHATTER, "Thread spawned -- running = %d\r\n", (bool) running);
         }
