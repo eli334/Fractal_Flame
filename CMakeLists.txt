@@ -43,7 +43,7 @@ if(EMSCRIPTEN)
     target_link_options(flame_web PRIVATE
         # -sALLOW_MEMORY_GROWTH=1 # this breaks the randomization 
         -sINITIAL_MEMORY=268435456
-        -sEXPORTED_FUNCTIONS=_main,_apply_seed
+        -sEXPORTED_FUNCTIONS=_main,_apply_seed,_set_quality,_commit_view
         -sEXPORTED_RUNTIME_METHODS=ccall,cwrap
         --shell-file ${CMAKE_SOURCE_DIR}/web/shell.html
     )

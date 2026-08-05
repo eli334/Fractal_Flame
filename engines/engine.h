@@ -202,6 +202,7 @@ class Engine {
 		void resize(int width, int height) {
 			if(running) stop();
 			globalHistogram.resize(width, height);
+			globalHistogram.clear();
 		}
 
 		/** 
@@ -224,16 +225,23 @@ class Engine {
 				}
 			}
 			if(maxVal == 0) return false; // don't render when nothing has generated yet
-			if(!force && lastMaxVal == maxVal) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
+			
+			// ceiling on the log table so a hot bin can't OOM the heap. bins past this
+			// saturate to full brightness -- invisible on a log display. the existing
+			// std::min(hits, logTableSize) clamp at sample time does the saturating.
+			static constexpr uint64_t kMaxLogEntries = 4'000'000; // ~32MB of doubles
+			uint64_t effectiveMax = std::min(maxVal, kMaxLogEntries);
+			
+			if(!force && lastMaxVal == effectiveMax) return false; // only render when maxVal increases; since it follows a power law, one histogram pixel should be hit WAY more than the rest
 						
-			double logMax = std::log(1.0f + (double)maxVal); // convert uint64_t to double, with 1.0 because log(0) is undefined
+			double logMax = std::log(1.0f + (double)effectiveMax); // convert uint64_t to double, with 1.0 because log(0) is undefined
 			
 			static std::vector<double> logTable;
 
 			
-			if(maxVal != lastMaxVal) {
-				logTable.resize(maxVal + 1);
-				for(uint64_t i = lastMaxVal + 1; i <= maxVal; i++) {
+			if(effectiveMax != lastMaxVal) {
+				logTable.resize(effectiveMax + 1);
+				for(uint64_t i = lastMaxVal + 1; i <= effectiveMax; i++) {
 					logTable[i] = std::log((double) i); // extend log table, dividing by brightness at render time
 				}
 			}
@@ -309,7 +317,7 @@ class Engine {
 
 
 			// buffer done filling
-			lastMaxVal = maxVal;
+			lastMaxVal = effectiveMax;
 			return true;
 		}
 
