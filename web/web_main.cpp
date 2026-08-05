@@ -264,7 +264,13 @@ int main() {
 
 
 extern "C" EMSCRIPTEN_KEEPALIVE void apply_seed(int seed) {
-    if(g_app) g_app->applySeed(seed);
+    if(!g_app) return;
+    double cssW = 0.0, cssH = 0.0;
+    emscripten_get_element_css_size("#canvas", &cssW, &cssH);
+    g_app->displayW = cssW > 0 ? static_cast<int>(cssW) : 800; // if > 0, set to width. otherwise, set to 800
+    g_app->displayH = cssH > 0 ? static_cast<int>(cssH) : 600;
+    g_app->applySeed(seed);
+    
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE void set_quality(int longEdgePx) {
